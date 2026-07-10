@@ -326,19 +326,27 @@ def main():
             R_ego = quaternion_to_mat(*ego_pose["rotation"])
             t_ego = np.array(ego_pose["translation"], dtype=np.float32)
 
+            # LiDAR calibration (用于 LiDAR↔ego 坐标转换)
+            lidar_yaw = quaternion_to_yaw(*lidar_calib["rotation"]) if lidar_calib_token else 0.0
+
             if has_gt:
                 cat_name = inst2cat.get(best_ann["instance_token"], "unknown")
-                gt_center = R_ego.T @ (np.array(best_ann["translation"], dtype=np.float32) - t_ego)
+                # GT 在 ego 帧 (用于显示)
+                gt_center_ego = R_ego.T @ (np.array(best_ann["translation"], dtype=np.float32) - t_ego)
                 gt_size = np.array(best_ann["size"], dtype=np.float32)
-                gt_yaw = quaternion_to_yaw(*best_ann["rotation"])
-                gt_yaw -= quaternion_to_yaw(*ego_pose["rotation"])
-                noisy_center = gt_center + rng.normal(0, 0.3, 3).astype(np.float32)
+                gt_yaw_ego = quaternion_to_yaw(*best_ann["rotation"]) - quaternion_to_yaw(*ego_pose["rotation"])
+
+                # noisy 初始值在 ego 帧 (显示用)
+                noisy_center_ego = gt_center_ego + rng.normal(0, 0.3, 3).astype(np.float32)
                 noisy_size = gt_size + rng.normal(0, 0.15, 3).astype(np.float32)
                 noisy_size = np.clip(noisy_size, 0.3, 20.0)
-                noisy_yaw = gt_yaw + math.radians(rng.normal(0, 5.0))
+                noisy_yaw_ego = gt_yaw_ego + math.radians(rng.normal(0, 5.0))
+
+                # 模型在 LiDAR 帧工作 → 转换 noisy 到 LiDAR 帧
+                noisy_center_lidar = R_lidar2ego.T @ (noisy_center_ego - t_lidar2ego)
+                noisy_yaw_lidar = noisy_yaw_ego - lidar_yaw
+                gt_center_lidar = R_lidar2ego.T @ (gt_center_ego - t_lidar2ego)
             else:
-                # 无 GT: mid-slice + DBSCAN → 核心点 → mean/PCA
-                # (与训练时 _extract_core_points 逻辑一致)
                 cls_id = det["class_id"]
                 obj_xyz_all = obj_pts[:, :3]
                 core_xyz = extract_core_points(
@@ -349,12 +357,14 @@ def main():
                 else:
                     obj_xyz = obj_xyz_all
                 obj_mean = obj_xyz.mean(axis=0)
-                noisy_center = (R_lidar2ego @ obj_mean.reshape(3, 1)).reshape(3) + t_lidar2ego
+
+                # 模型在 LiDAR 帧工作
+                noisy_center_lidar = obj_mean.astype(np.float32)
                 noisy_size = np.array(
                     DEFAULT_SIZE.get(cls_id, (2.0, 4.5, 1.6)),
                     dtype=np.float32)
 
-                # PCA 估计初始 yaw
+                # PCA 估计初始 yaw (LiDAR 帧, xy 平面主方向)
                 centered = obj_xyz[:, :2] - obj_mean[:2]
                 cov = centered.T @ centered / len(centered)
                 eigvals, eigvecs = np.linalg.eigh(cov)
@@ -363,12 +373,18 @@ def main():
                 pca_yaw = math.atan2(math.sin(pca_yaw), math.cos(pca_yaw))
                 if abs(pca_yaw) > math.pi / 2:
                     pca_yaw -= math.copysign(math.pi, pca_yaw)
-                noisy_yaw = float(pca_yaw)
+                noisy_yaw_lidar = float(pca_yaw)
+
+                # ego 帧 (显示用)
+                noisy_center_ego = (R_lidar2ego @ noisy_center_lidar.reshape(3, 1)).reshape(3) + t_lidar2ego
+                noisy_yaw_ego = noisy_yaw_lidar + lidar_yaw
+                gt_center_ego = None
+                gt_center_lidar = None
                 cat_name = OBSTACLE_CLASSES.get(cls_id, ("unknown",))[0]
 
-            # ---- C2 推理 ----
-            local_xyz = obj_pts[:, :3].astype(np.float32) - noisy_center
-            local_xyz = rotate_points_z(local_xyz, -noisy_yaw)
+            # ---- C2 推理 (LiDAR 帧, 与训练一致) ----
+            local_xyz = obj_pts[:, :3].astype(np.float32) - noisy_center_lidar
+            local_xyz = rotate_points_z(local_xyz, -noisy_yaw_lidar)
             extent = max(float(np.ptp(local_xyz)), 0.3)
             scale = extent / 2.0
             local_xyz_norm = local_xyz / scale
@@ -395,32 +411,34 @@ def main():
             with torch.no_grad():
                 residual = model(None, inp)[0].cpu().numpy()
 
-            pred_center = noisy_center + residual[:3]
+            # 预测结果从 LiDAR 帧转回 ego 帧 (用于显示)
+            pred_center_lidar = noisy_center_lidar + residual[:3]
+            pred_center_ego = (R_lidar2ego @ pred_center_lidar.reshape(3, 1)).reshape(3) + t_lidar2ego
             pred_size = noisy_size + residual[3:6]
-            pred_yaw = noisy_yaw + math.atan2(residual[6], residual[7])
+            pred_yaw_ego = noisy_yaw_lidar + math.atan2(residual[6], residual[7]) + lidar_yaw
 
             # 添加到整帧点云: GT (绿), C2 (红), Noisy (蓝)
             if has_gt:
-                points_list.append(bbox_edges_as_points(gt_center, gt_size, gt_yaw))
+                points_list.append(bbox_edges_as_points(gt_center_ego, gt_size, gt_yaw_ego))
                 color_list.append((0, 220, 0))        # 绿色 = GT
 
-                points_list.append(bbox_edges_as_points(noisy_center, noisy_size, noisy_yaw))
+                points_list.append(bbox_edges_as_points(noisy_center_ego, noisy_size, noisy_yaw_ego))
                 color_list.append((100, 150, 255))    # 蓝色 = Noisy
 
-            points_list.append(bbox_edges_as_points(pred_center, pred_size, pred_yaw))
+            points_list.append(bbox_edges_as_points(pred_center_ego, pred_size, pred_yaw_ego))
             color_list.append((255, 40, 40))          # 红色 = C2
 
             # debug: print pred vs GT for first few frames
             if frame_idx < 4:
-                gt_str = f"GT sz=({gt_size[0]:.1f},{gt_size[1]:.1f},{gt_size[2]:.1f}) yaw={math.degrees(gt_yaw):.0f}°" if has_gt else "no GT"
-                print(f"  [{obj_idx+1}] {cat_name:20s} pred: sz=({pred_size[0]:.1f},{pred_size[1]:.1f},{pred_size[2]:.1f}) yaw={math.degrees(pred_yaw):.0f}°  |  noisy: sz=({noisy_size[0]:.1f},{noisy_size[1]:.1f},{noisy_size[2]:.1f}) yaw={math.degrees(noisy_yaw):.0f}°  |  {gt_str}")
+                gt_str = f"GT sz=({gt_size[0]:.1f},{gt_size[1]:.1f},{gt_size[2]:.1f}) yaw={math.degrees(gt_yaw_ego):.0f}°" if has_gt else "no GT"
+                print(f"  [{obj_idx+1}] {cat_name:20s} pred: sz=({pred_size[0]:.1f},{pred_size[1]:.1f},{pred_size[2]:.1f}) yaw={math.degrees(pred_yaw_ego):.0f}°  |  noisy: sz=({noisy_size[0]:.1f},{noisy_size[1]:.1f},{noisy_size[2]:.1f}) yaw={math.degrees(noisy_yaw_ego):.0f}°  |  {gt_str}")
 
             highlighted.append(det)
-            results.append((noisy_center, noisy_size, noisy_yaw,
-                            pred_center, pred_size, pred_yaw,
-                            gt_center if has_gt else None,
+            results.append((noisy_center_ego, noisy_size, noisy_yaw_ego,
+                            pred_center_ego, pred_size, pred_yaw_ego,
+                            gt_center_ego if has_gt else None,
                             gt_size if has_gt else None,
-                            gt_yaw if has_gt else None,
+                            gt_yaw_ego if has_gt else None,
                             cat_name, has_gt))
             obj_idx += 1
             total_objs += 1

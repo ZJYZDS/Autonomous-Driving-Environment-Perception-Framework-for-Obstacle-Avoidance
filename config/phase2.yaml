@@ -36,5 +36,5 @@ training:
 
 loss:
   center_weight: 1.0
-  size_weight: 1.0
-  yaw_weight: 0.5
+  size_weight: 2.0
+  yaw_weight: 1.5

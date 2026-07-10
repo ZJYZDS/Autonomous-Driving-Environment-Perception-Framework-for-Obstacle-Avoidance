@@ -20,11 +20,11 @@ class BboxRefinementLoss(nn.Module):
          + size_weight  * SmoothL1(dw,dh,dl)
          + yaw_weight   * MSE(sin(dθ), cos(dθ))
 
-    权重默认 center=1.0, size=1.0, yaw=0.5.
-    yaw 权重较低是因为 sin/cos MSE 的数值量级天然比 SmoothL1 大.
+    权重默认 center=1.0, size=2.0, yaw=1.5.
+    size/yaw 高权重补偿其较小的数值量级, 防止 center 主导梯度.
     """
 
-    def __init__(self, center_weight=1.0, size_weight=1.0, yaw_weight=0.5):
+    def __init__(self, center_weight=1.0, size_weight=2.0, yaw_weight=1.5):
         super().__init__()
         self.center_weight = center_weight
         self.size_weight = size_weight

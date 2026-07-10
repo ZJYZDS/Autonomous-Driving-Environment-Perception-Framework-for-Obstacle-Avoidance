@@ -28,7 +28,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 import torch
-from sklearn.cluster import DBSCAN
 from torch.utils.data import Dataset
 
 from src.dataset_phase1 import (LiDARProjector, quaternion_to_yaw, quaternion_to_mat,
@@ -63,8 +62,6 @@ class Phase2Dataset(Dataset):
     NOISE_CENTER = 0.3         # center 噪声标准差 (米)
     NOISE_SIZE = 0.15          # size 噪声标准差 (米)
     NOISE_YAW_DEG = 5.0        # yaw 噪声标准差 (度)
-    PC_INIT_PROB = 0.7          # 点云 yaw 初始化概率 (否则 GT+noise)
-    PC_CENTER_NOISE = 1.0       # pc_init 模式下 center 噪声标准差 (米, 大于 gt_noise 模式)
     MAX_DELTA_CENTER = 2.0      # center 残差截断 (米)
     MAX_DELTA_SIZE = 1.0        # size 残差截断 (米)
     MAX_DELTA_YAW_DEG = 20.0    # yaw 残差截断 (度)
@@ -173,6 +170,19 @@ class Phase2Dataset(Dataset):
         t_ego = np.array(ego_pose["translation"], dtype=np.float32)
         # 逆变换: global → ego
         return R_ego.T @ (point_global.astype(np.float32) - t_ego)
+
+    def _global_to_lidar(self, point_global, sample_token):
+        """global → LiDAR 帧 (与 obj_points 统一坐标系, 消除训练/推理 domain gap)."""
+        pt_ego = self._global_to_ego(point_global, sample_token)
+        if pt_ego is None:
+            return None
+        lidar_calib_token = self.projector._sample_sensor_calib.get(sample_token, {}).get("LIDAR_TOP")
+        if lidar_calib_token is None:
+            return None
+        lidar_calib = self.projector.calibs[lidar_calib_token]
+        R_lidar = quaternion_to_mat(*lidar_calib["rotation"])
+        t_lidar = np.array(lidar_calib["translation"], dtype=np.float32)
+        return R_lidar.T @ (pt_ego - t_lidar)   # Ego → LiDAR
 
     def _global_to_camera(self, point_global, sample_token):
         """global 坐标 → camera 坐标 (用于 GT 投影到图像平面).
@@ -330,9 +340,7 @@ class Phase2Dataset(Dataset):
             return None
 
         # ---- 构建训练目标 ----
-        lidar_features, target = self._build_target(
-            obj_pts, matched_gt, sample_token,
-            cls_id=det["class_id"], bbox=det["bbox"], uv=uv, valid_proj=valid_proj, lidar=lidar)
+        lidar_features, target = self._build_target(obj_pts, matched_gt, sample_token)
 
         if self.return_category:
             cat_name = self._inst2cat_name.get(matched_gt["instance_token"], "unknown")
@@ -386,122 +394,45 @@ class Phase2Dataset(Dataset):
         return best_match
 
     # ==========================================================================
-    # 中点切片 + DBSCAN: 从 bbox 点云中提取目标核心表面点
-    # ==========================================================================
-
-    @staticmethod
-    def _extract_core_points(obj_points, cls_id, bbox, uv, valid_proj, lidar):
-        """中点垂直切片 + DBSCAN 聚类 → 只保留主物体核心表面点.
-
-        动机: 2D bbox 内常混入地面/背景点, 均值会严重偏移.
-        中部 40% 区域对应物体中心剖面, 点几乎全来自物体表面.
-        DBSCAN 进一步剔除投影误差混入的边缘离群点.
-        """
-        if bbox is None or uv is None or valid_proj is None or lidar is None:
-            return None
-
-        x1, y1, x2, y2 = bbox.astype(int)
-        cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-        crop_w = int((x2 - x1) * 0.4)
-        crop_h = int((y2 - y1) * 0.4)
-
-        if crop_w < 3 or crop_h < 3:
-            return None
-
-        mid_mask = (
-            (uv[:, 0] >= cx - crop_w / 2) & (uv[:, 0] <= cx + crop_w / 2) &
-            (uv[:, 1] >= cy - crop_h / 2) & (uv[:, 1] <= cy + crop_h / 2)
-        )
-        core_lidar = lidar[mid_mask & valid_proj]
-        if len(core_lidar) < 5:
-            return None
-
-        core_xyz = core_lidar[:, :3].astype(np.float32)
-
-        # 按类别自适应 DBSCAN
-        if cls_id == 0:              # person: 点极少
-            eps, min_samples = 0.2, 3
-        elif cls_id in (5, 7):       # bus / truck: 巨大物体
-            eps, min_samples = 0.8, 12
-        else:                        # car, bicycle, etc.
-            eps, min_samples = 0.5, 8
-
-        clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(core_xyz)
-
-        labels = clustering.labels_
-        valid_labels = labels[labels >= 0]
-        if len(valid_labels) == 0:
-            return None
-
-        # 取点数最多的簇 (主物体)
-        main_label = np.bincount(valid_labels).argmax()
-        return core_xyz[labels == main_label]
-
-    # ==========================================================================
     # 训练目标构建: GT + noise → residual
     # ==========================================================================
 
-    def _build_target(self, obj_points, ann, sample_token,
-                       cls_id=None, bbox=None, uv=None, valid_proj=None, lidar=None):
-        """构建训练样本: 用点云统计量或 GT+噪声 作为初始框, 计算残差作为回归目标.
-
-        两种模式 (随机切换, 消除训练/推理 domain gap):
-          A. 点云初始化 (pc_init):  mid-slice + DBSCAN → core points → mean/PCA
-          B. GT 加噪声 (gt_noise):  GT + small noise
+    def _build_target(self, obj_points, ann, sample_token):
+        """构建训练样本: GT+噪声作为初始框, 计算残差作为回归目标.
 
         流程:
-          1. GT 从 global → ego 坐标系 (与 LiDAR 一致)
-          2. 生成 noisy center/size/yaw (pc_init 或 gt_noise)
+          1. GT 从 global → LiDAR 坐标系 (与 obj_points 统一, 消除 domain gap)
+          2. 生成 noisy center/size/yaw
           3. 点云去中心化 + 旋转对齐 noisy 朝向
           4. 按物体物理范围归一化坐标 (使 SA 半径自适应物体尺度)
           5. FPS 重采样到固定点数 (256)
           6. 目标 = [Δcenter, Δsize, sin(Δyaw), cos(Δyaw)]
         """
         rng = np.random.default_rng()
-        use_pc_init = rng.random() < self.PC_INIT_PROB
 
-        # GT global → ego
+        # GT global → LiDAR 帧 (与 obj_points 统一, 消除训练/推理 domain gap)
         gt_center_global = np.array(ann["translation"], dtype=np.float32)
-        gt_center = self._global_to_ego(gt_center_global, sample_token)
+        gt_center = self._global_to_lidar(gt_center_global, sample_token)
         gt_size = np.array(ann["size"], dtype=np.float32)
         gt_yaw = quaternion_to_yaw(*ann["rotation"])
 
-        # yaw 从 global 调整到 ego 坐标系
+        # yaw 从 global 调整到 LiDAR 坐标系
         ego_pose_token = self._sample_ego.get(sample_token)
         if ego_pose_token:
             ego_pose = self._ego_poses[ego_pose_token]
             ego_yaw = quaternion_to_yaw(*ego_pose["rotation"])
             gt_yaw = gt_yaw - ego_yaw
+        lidar_calib_token = self.projector._sample_sensor_calib.get(sample_token, {}).get("LIDAR_TOP")
+        if lidar_calib_token:
+            lidar_calib = self.projector.calibs[lidar_calib_token]
+            lidar_yaw = quaternion_to_yaw(*lidar_calib["rotation"])
+            gt_yaw = gt_yaw - lidar_yaw
 
-        if use_pc_init and len(obj_points) >= 20:
-            # 点云初始化: mid-slice + DBSCAN → 核心表面点 → mean/PCA
-            core_xyz = self._extract_core_points(obj_points, cls_id, bbox, uv, valid_proj, lidar)
-            if core_xyz is not None and len(core_xyz) >= 5:
-                obj_xyz = core_xyz
-            else:
-                obj_xyz = obj_points[:, :3].astype(np.float32)
-            noisy_center = obj_xyz.mean(axis=0)
-
-            # PCA 估计朝向
-            centered_xy = obj_xyz[:, :2] - noisy_center[:2]
-            cov = centered_xy.T @ centered_xy / len(centered_xy)
-            eigvals, eigvecs = np.linalg.eigh(cov)
-            principal = eigvecs[:, -1]
-            pca_yaw = math.atan2(principal[1], principal[0])
-            pca_yaw = math.atan2(math.sin(pca_yaw), math.cos(pca_yaw))
-            if abs(pca_yaw) > math.pi / 2:
-                pca_yaw -= math.copysign(math.pi, pca_yaw)
-            noisy_yaw = float(pca_yaw)
-
-            # size: GT + 噪声
-            noisy_size = gt_size + rng.normal(0, self.NOISE_SIZE, 3).astype(np.float32)
-            noisy_size = np.clip(noisy_size, 0.3, 20.0)
-        else:
-            # GT + 小噪声: 保留 fine refinement 能力
-            noisy_center = gt_center + rng.normal(0, self.NOISE_CENTER, 3).astype(np.float32)
-            noisy_size = gt_size + rng.normal(0, self.NOISE_SIZE, 3).astype(np.float32)
-            noisy_size = np.clip(noisy_size, 0.3, 20.0)
-            noisy_yaw = gt_yaw + math.radians(rng.normal(0, self.NOISE_YAW_DEG))
+        # GT + 小噪声: LiDAR 帧下统一, 与推理分布一致
+        noisy_center = gt_center + rng.normal(0, self.NOISE_CENTER, 3).astype(np.float32)
+        noisy_size = gt_size + rng.normal(0, self.NOISE_SIZE, 3).astype(np.float32)
+        noisy_size = np.clip(noisy_size, 0.3, 20.0)
+        noisy_yaw = gt_yaw + math.radians(rng.normal(0, self.NOISE_YAW_DEG))
 
         # 点云归一化: 去中心 + 旋转对齐 noisy 朝向
         local_xyz = obj_points[:, :3] - noisy_center
