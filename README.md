@@ -39,6 +39,30 @@ CAM_FRONT (1600×900) + LIDAR_TOP (N×5)
 
 不同物体尺度差异大（行人 0.5m vs 卡车 10m），用点云半跨度自适应缩放，使 SA 半径工作在相对单位。
 
+## 可视化 (C2 在 nuScenes 上的推理结果)
+
+**图例**: 橙色点 = CAM_FRONT FOV 内 LiDAR, 深灰点 = FOV 外, 绿色框 = GT, 蓝色框 = 噪声输入, 红色框 = C2 预测
+
+### Frame 01 (卡车 + 轿车)
+
+| 2D 检测 (CAM_FRONT) | 3D 点云 + bbox (透视图) | 3D 俯视图 |
+|:---:|:---:|:---:|
+| ![cam_01](display/frame_01_cam.jpg) | ![3d_01](display/frame_01_persp.png) | ![top_01](display/frame_01_top.png) |
+
+### Frame 03 (两轿车 + 行人)
+
+| 2D 检测 (CAM_FRONT) | 3D 点云 + bbox (透视图) | 3D 俯视图 |
+|:---:|:---:|:---:|
+| ![cam_03](display/frame_03_cam.jpg) | ![3d_03](display/frame_03_persp.png) | ![top_03](display/frame_03_top.png) |
+
+### Frame 04 (巴士 + 轿车)
+
+| 2D 检测 (CAM_FRONT) | 3D 点云 + bbox (透视图) | 3D 俯视图 |
+|:---:|:---:|:---:|
+| ![cam_04](display/frame_04_cam.jpg) | ![3d_04](display/frame_04_persp.png) | ![top_04](display/frame_04_top.png) |
+
+> 每个物体的局部 PLY 见 `display/frame_XX/obj_*.ply`, 用 CloudCompare 打开即可自动对焦到该物体。
+
 ## 快速开始
 
 ```bash

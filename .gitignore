@@ -1,5 +1,4 @@
 data/
-display/
 __pycache__/
 *.pyc
 .idea/
