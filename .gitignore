@@ -1,0 +1,8 @@
+data/
+display/
+__pycache__/
+*.pyc
+.idea/
+.vscode/
+.claude/
+*.egg-info/
