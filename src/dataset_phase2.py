@@ -62,7 +62,11 @@ class Phase2Dataset(Dataset):
     NOISE_CENTER = 0.3         # center 噪声标准差 (米)
     NOISE_SIZE = 0.15          # size 噪声标准差 (米)
     NOISE_YAW_DEG = 5.0        # yaw 噪声标准差 (度)
-    PC_INIT_PROB = 0.7          # 点云初始化概率 (否则 GT+noise)
+    PC_INIT_PROB = 0.7          # 点云 yaw 初始化概率 (否则 GT+noise)
+    PC_CENTER_NOISE = 1.0       # pc_init 模式下 center 噪声标准差 (米, 大于 gt_noise 模式)
+    MAX_DELTA_CENTER = 2.0      # center 残差截断 (米)
+    MAX_DELTA_SIZE = 1.0        # size 残差截断 (米)
+    MAX_DELTA_YAW_DEG = 20.0    # yaw 残差截断 (度)
     MATCH_MAX_DIST_PX = 80     # GT 匹配的最大 2D 中心距离 (像素)
 
     def __init__(self, data_root, split="train", cfg=None,
@@ -414,13 +418,14 @@ class Phase2Dataset(Dataset):
             gt_yaw = gt_yaw - ego_yaw
 
         if use_pc_init and len(obj_points) >= 20:
-            # 点云初始化: 模拟推理时的真实输入分布
-            obj_xyz = obj_points[:, :3].astype(np.float32)
-            noisy_center = obj_xyz.mean(axis=0)
+            # 点云初始化: center=GT+大噪声(±1m), yaw=PCA → 模拟无 GT 的推理场景
+            # center 使用 GT+噪声而非点云均值: 避免 LiDAR/ego 坐标帧不匹配
+            noisy_center = gt_center + rng.normal(0, self.PC_CENTER_NOISE, 3).astype(np.float32)
 
             # PCA 估计朝向
-            centered = obj_xyz[:, :2] - noisy_center[:2]
-            cov = centered.T @ centered / len(centered)
+            obj_xyz = obj_points[:, :3].astype(np.float32)
+            centered_xy = obj_xyz[:, :2] - obj_xyz[:, :2].mean(axis=0)
+            cov = centered_xy.T @ centered_xy / len(centered_xy)
             eigvals, eigvecs = np.linalg.eigh(cov)
             principal = eigvecs[:, -1]
             pca_yaw = math.atan2(principal[1], principal[0])
@@ -429,11 +434,11 @@ class Phase2Dataset(Dataset):
                 pca_yaw -= math.copysign(math.pi, pca_yaw)
             noisy_yaw = float(pca_yaw)
 
-            # size: GT + 噪声 (部分可见点云无法估计完整尺寸)
+            # size: GT + 噪声
             noisy_size = gt_size + rng.normal(0, self.NOISE_SIZE, 3).astype(np.float32)
             noisy_size = np.clip(noisy_size, 0.3, 20.0)
         else:
-            # GT + 噪声: 保留 refiner 能力
+            # GT + 小噪声: 保留 fine refinement 能力
             noisy_center = gt_center + rng.normal(0, self.NOISE_CENTER, 3).astype(np.float32)
             noisy_size = gt_size + rng.normal(0, self.NOISE_SIZE, 3).astype(np.float32)
             noisy_size = np.clip(noisy_size, 0.3, 20.0)
@@ -461,11 +466,15 @@ class Phase2Dataset(Dataset):
 
         point_features = np.concatenate([local_xyz, intensity, scale_feat], axis=1).astype(np.float32)
 
-        # 残差目标
+        # 残差目标 (饱和截断: 防止梯度爆炸, 模型只需学"朝正确方向挪有限步")
         delta_center = (gt_center - noisy_center).astype(np.float32)
+        delta_center = np.clip(delta_center, -self.MAX_DELTA_CENTER, self.MAX_DELTA_CENTER)
         delta_size = (gt_size - noisy_size).astype(np.float32)
+        delta_size = np.clip(delta_size, -self.MAX_DELTA_SIZE, self.MAX_DELTA_SIZE)
         delta_yaw = gt_yaw - noisy_yaw
-        delta_yaw = math.atan2(math.sin(delta_yaw), math.cos(delta_yaw))  # 归一化到 [-π, π]
+        delta_yaw = math.atan2(math.sin(delta_yaw), math.cos(delta_yaw))
+        delta_yaw = np.clip(delta_yaw, -math.radians(self.MAX_DELTA_YAW_DEG),
+                            math.radians(self.MAX_DELTA_YAW_DEG))
 
         target = np.array([
             delta_center[0], delta_center[1], delta_center[2],

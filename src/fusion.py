@@ -229,9 +229,9 @@ class CrossModalFusion(nn.Module):
         # ---- 3D 分支: 3 层 SA, 输出 256 通道 ----
         if sa_configs is None:
             sa_configs = [
-                dict(npoint=32, radius=0.3, nsample=32, mlp=[32, 32, 64]),
-                dict(npoint=16, radius=0.7, nsample=16, mlp=[64, 128, 128]),
-                dict(npoint=8,  radius=1.5, nsample=8,  mlp=[128, 256, 256]),
+                dict(npoint=32, radius=1.0, nsample=64, mlp=[32, 32, 64]),
+                dict(npoint=16, radius=0.5, nsample=32, mlp=[64, 128, 128]),
+                dict(npoint=8,  radius=0.2, nsample=16, mlp=[128, 256, 256]),
             ]
         self.encoder_3d = PointNet2Encoder(sa_configs)
         self.proj_3d = nn.Linear(256, d_model)  # 256 → d_model
@@ -338,9 +338,9 @@ class LidarOnlyRefiner(nn.Module):
         super().__init__()
         if sa_configs is None:
             sa_configs = [
-                dict(npoint=32, radius=0.3, nsample=32, mlp=[32, 32, 64]),
-                dict(npoint=16, radius=0.7, nsample=16, mlp=[64, 128, 128]),
-                dict(npoint=8,  radius=1.5, nsample=8,  mlp=[128, 256, 256]),
+                dict(npoint=32, radius=1.0, nsample=64, mlp=[32, 32, 64]),
+                dict(npoint=16, radius=0.5, nsample=32, mlp=[64, 128, 128]),
+                dict(npoint=8,  radius=0.2, nsample=16, mlp=[128, 256, 256]),
             ]
         self.encoder = PointNet2Encoder(sa_configs)
         self.head = nn.Sequential(

@@ -5,3 +5,5 @@ __pycache__/
 .vscode/
 .claude/
 *.egg-info/
+checkpoints/
+checkpoints_phase2/

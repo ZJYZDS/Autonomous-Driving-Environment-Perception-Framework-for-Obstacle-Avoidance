@@ -21,9 +21,9 @@ num_layers: 1
 dropout: 0.1
 
 sa_configs:
-  - {npoint: 32, radius: 0.3, nsample: 32, mlp: [32, 32, 64]}
-  - {npoint: 16, radius: 0.7, nsample: 16, mlp: [64, 128, 128]}
-  - {npoint: 8,  radius: 1.5, nsample: 8,  mlp: [128, 256, 256]}
+  - {npoint: 32, radius: 1.0, nsample: 64, mlp: [32, 32, 64]}
+  - {npoint: 16, radius: 0.5, nsample: 32, mlp: [64, 128, 128]}
+  - {npoint: 8,  radius: 0.2, nsample: 16, mlp: [128, 256, 256]}
 
 training:
   epochs: 30
