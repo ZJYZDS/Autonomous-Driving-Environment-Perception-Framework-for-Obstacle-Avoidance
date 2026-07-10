@@ -194,6 +194,7 @@ def main():
     detector = YOLODetectONNX("models/yolo26s.onnx", conf_thresh=0.5)
     projector = LiDARProjector(DATA_ROOT)
     total_objs = 0
+    display_idx = 0
 
     for frame_idx, sample_token in enumerate(valid_frames[:NUM_FRAMES]):
         cam_token = frame_sensors[sample_token]["CAM_FRONT"]
@@ -298,14 +299,27 @@ def main():
                 noisy_size = np.clip(noisy_size, 0.3, 20.0)
                 noisy_yaw = gt_yaw + math.radians(rng.normal(0, 5.0))
             else:
-                # 无 GT: 用点云均值作为初始位置 (LiDAR → ego)
-                obj_mean = obj_pts[:, :3].mean(axis=0)
+                # 无 GT: PCA 估计初始朝向 + 点云中心
+                obj_xyz = obj_pts[:, :3]  # LiDAR 坐标系
+                obj_mean = obj_xyz.mean(axis=0)
                 obj_mean_ego = (R_lidar2ego @ obj_mean.reshape(3, 1)).reshape(3) + t_lidar2ego
-                noisy_center = obj_mean_ego
                 noisy_size = np.array(
                     DEFAULT_SIZE.get(det["class_id"], (2.0, 4.5, 1.6)),
                     dtype=np.float32)
-                noisy_yaw = 0.0
+
+                # PCA 估计初始 yaw: 点云主方向 (用于巴士/卡车等长条形物体)
+                centered = obj_xyz[:, :2] - obj_mean[:2]
+                cov = centered.T @ centered / len(centered)
+                eigvals, eigvecs = np.linalg.eigh(cov)
+                principal = eigvecs[:, -1]  # 最大特征值方向 (点云最长轴)
+                pca_yaw = math.atan2(principal[1], principal[0])
+                # 标准化到 [-π/2, π/2] (消除 180° 歧义)
+                pca_yaw = math.atan2(math.sin(pca_yaw), math.cos(pca_yaw))
+                if abs(pca_yaw) > math.pi / 2:
+                    pca_yaw -= math.copysign(math.pi, pca_yaw)
+
+                noisy_center = obj_mean_ego
+                noisy_yaw = float(pca_yaw)
                 cat_name = OBSTACLE_CLASSES.get(det["class_id"], ("unknown",))[0]
 
             # ---- C2 推理 ----
@@ -371,19 +385,20 @@ def main():
             continue
 
         # 保存整帧 PLY (全景)
-        ply_path = os.path.join(OUT_DIR, f"frame_{frame_idx+1:02d}.ply")
+        ply_path = os.path.join(OUT_DIR, f"frame_{display_idx+1:02d}.ply")
         save_ply(ply_path, points_list, color_list)
 
         # 保存 2D 参考图
-        jpg_path = os.path.join(OUT_DIR, f"frame_{frame_idx+1:02d}_cam.jpg")
+        jpg_path = os.path.join(OUT_DIR, f"frame_{display_idx+1:02d}_cam.jpg")
         draw_2d_image(img, dets, highlighted, jpg_path)
 
-        print(f"  frame_{frame_idx+1:02d}: {obj_idx} objects, "
+        print(f"  frame_{display_idx+1:02d}: {obj_idx} objects, "
               f"{sum(len(p) for p in points_list)} pts "
               f"(FOV={len(pts_fov)}/{len(pts_fov)+len(pts_out)} cam pts) -> PLY")
 
         # ---- 每个物体单独的局部 PLY (自动对焦, 含完整 LIDAR_TOP) ----
-        obj_dir = os.path.join(OUT_DIR, f"frame_{frame_idx+1:02d}")
+        obj_dir = os.path.join(OUT_DIR, f"frame_{display_idx+1:02d}")
+        display_idx += 1
         os.makedirs(obj_dir, exist_ok=True)
         all_lidar = lidar_xyz_ego[idx_lidar]  # 当前帧的完整降采样点云
         for i, (nc, ns, ny, pc, ps, py, gc, gs, gy, cat, has_gt) in enumerate(results):
