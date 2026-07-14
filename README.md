@@ -6,19 +6,29 @@
 **输出**: 每个检测物体的 3D bbox — 中心 (cx, cy, cz)、尺寸 (w, l, h)、朝向 (yaw)
 **数据集**: nuScenes v1.0-mini
 
-## 效果 (Test Set, Frame 03 — 9 物体)
+## 效果 (Test Set, GT-bbox 管线)
 
 > 图例: 金色点 = CAM_FRONT 视锥内 LiDAR 点, 深灰 = 视锥外, 彩色粗框 = 模型预测 3D BBox, 箭头 = 朝向.
 
-![cam](docs/images/test_cam.jpg)
+### Frame 03 — 9 物体 (行人 + 轿车 + 卡车)
 
-*2D 检测: YOLO 框 + 3D BBox 投影 + 相机深度标注*
+| 2D 检测 (YOLO + 3D BBox 投影) | LiDAR 俯视图 |
+|:---:|:---:|
+| ![cam03](docs/images/test_cam.jpg) | ![top03](docs/images/test_top.png) |
 
-![top](docs/images/test_top.png)
+### Frame 05 — 8 物体 (多辆轿车)
 
-*LiDAR 俯视图 — 所有 9 个 3D BBox 在同一帧点云中*
+| 2D 检测 | LiDAR 俯视图 |
+|:---:|:---:|
+| ![cam05](docs/images/test05_cam.jpg) | ![top05](docs/images/test05_top.png) |
 
-> 用 CloudCompare / Meshlab 打开 `docs/images/test.ply` 可交互式查看所有 3D BBox 线框. 更多帧: `display/test/` (frustum 管线), `display/test_gt/` (GT-bbox 管线).
+### Frame 07 — 8 物体 (多辆轿车)
+
+| 2D 检测 | LiDAR 俯视图 |
+|:---:|:---:|
+| ![cam07](docs/images/test07_cam.jpg) | ![top07](docs/images/test07_top.png) |
+
+> 用 CloudCompare / Meshlab 打开 `docs/images/test.ply` / `test05.ply` / `test07.ply` 可交互查看 3D BBox 线框. 更多帧: `display/test_gt/`.
 
 ## Phase 3 (当前主线)
 
