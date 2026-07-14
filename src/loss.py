@@ -49,7 +49,8 @@ class PointNet3DLoss(nn.Module):
 
         # 行人和骑行者几何上无方向信息, 跳过 yaw loss
         if class_ids is not None:
-            mask = (class_ids != 0) & (class_ids != 1)  # skip pedestrian & rider
+            # 行人类 (0,1) + 无方向类 (8,9): traffic light/sign 无几何 yaw
+            mask = (class_ids != 0) & (class_ids != 1) & (class_ids != 8) & (class_ids != 9)
             mask = mask.float()
             if mask.sum() > 0:
                 loss_yaw = (loss_per_sample * mask).sum() / mask.sum()

@@ -25,15 +25,19 @@ FINETUNE_CLASSES = [
     "motorcycle", "bicycle", "traffic light", "traffic sign",
 ]
 
-# 3D 检测关心的障碍物类别 (微调模型类索引)
+# 3D 检测: YOLO 微调模型可检测的全部障碍物类别
+# is_person: True → yaw 不参与训练 (点云几何无方向信息)
 OBSTACLE_CLASSES = {
-    0:  ("pedestrian",  True),     # 行人
-    1:  ("rider",       True),     # 骑行者 → 按行人处理
-    2:  ("car",         False),
-    3:  ("truck",       False),
-    4:  ("bus",         False),
-    6:  ("motorcycle",  False),
-    7:  ("bicycle",     False),
+    0:  ("pedestrian",     True),   # 行人
+    1:  ("rider",          True),   # 骑行者
+    2:  ("car",            False),
+    3:  ("truck",          False),
+    4:  ("bus",            False),
+    5:  ("train",          False),  # 火车 (nuScenes 稀有)
+    6:  ("motorcycle",     False),
+    7:  ("bicycle",        False),
+    8:  ("traffic light",  False),  # 交通灯
+    9:  ("traffic sign",   False),  # 交通标志
 }
 OBSTACLE_CLASS_IDS = set(OBSTACLE_CLASSES.keys())
 

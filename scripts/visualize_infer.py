@@ -186,7 +186,7 @@ def main():
     projector = LiDARProjector(dc['nusc_root'])
 
     # YOLO detector
-    from src.detector import YOLOPtDetector
+    from src.detector import YOLOPtDetector, OBSTACLE_CLASS_IDS
     detector = YOLOPtDetector(pt_path=cfg.get('detector_path','weiTiao_pt/best.pt'))
 
     # Build val frame list
@@ -229,13 +229,12 @@ def main():
 
         # ── YOLO detection ──
         dets = detector.predict(img)
-        OBSTACLE_IDS = {0,1,2,3,4,6,7}
-        dets = [d for d in dets if d['class_id'] in OBSTACLE_IDS]
+        dets = [d for d in dets if d['class_id'] in OBSTACLE_CLASS_IDS]
 
         # ── Frustum pipeline predictions ──
         preds_frustum = pipeline_predict(
             model, lidar, dets, K, T_l2c, device,
-            num_points=dc.get('num_points', 512), min_points=5)
+            num_points=dc.get('num_points', 512), min_points=30)
 
         # ── GT-bbox predictions (对比) ──
         from src.dataset_phase3 import Phase3Dataset

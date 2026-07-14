@@ -15,8 +15,9 @@ dataset:
   remove_ground: true
   use_augmentation: true
   preprocess_dir: "data/nuscenes/preprocess_phase3/nsweeps_5"
-  val_scene_ids: 2
-  frustum_mix_ratio: 0.3   # 30% frustum + 70% GT-bbox 混合训练, 0=纯GT
+  val_scene_ids: 1           # val: 最后1个场景 (~10%)
+  test_ratio: 0.022          # test: train场景中随机抽2.2% (≈90/8/2 split)
+  frustum_mix_ratio: 0.3
 
 detector_path: "weiTiao_pt/best.pt"
 

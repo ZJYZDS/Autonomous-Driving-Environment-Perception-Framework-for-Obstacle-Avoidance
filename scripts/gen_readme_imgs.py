@@ -153,8 +153,7 @@ for c, s, yaw, name, cid, d in preds:
     al = s[1] * 0.7
     ax.arrow(c[0], c[1], al * math.cos(yaw), al * math.sin(yaw),
              head_width=0.6, head_length=0.6, fc=clr, ec=clr, lw=2.5)
-    ax.annotate(name, (c[0], c[1]), fontsize=11, color=clr, weight='bold',
-                xytext=(5, 5), textcoords='offset points')
+    ax.text(c[0] + 0.5, c[1] + 0.5, name, fontsize=11, color=clr, weight='bold')
 ax.set_xlabel('X (m)', fontsize=14)
 ax.set_ylabel('Y (m)', fontsize=14)
 ax.set_aspect('equal')

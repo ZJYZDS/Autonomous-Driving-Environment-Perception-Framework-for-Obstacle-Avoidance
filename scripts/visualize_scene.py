@@ -23,7 +23,7 @@ from src.dataset_phase1 import LiDARProjector
 CLASS_NAMES = {0: 'pedestrian', 1: 'rider', 2: 'car', 3: 'truck', 4: 'bus', 6: 'motorcycle', 7: 'bicycle'}
 CLASS_COLORS = {0: '#FF6B6B', 1: '#FF9999', 2: '#6BCB77', 3: '#E67E22', 4: '#9B59B6', 6: '#4D96FF', 7: '#FFD93D'}
 BBOX_EDGES = [(0,1),(1,2),(2,3),(3,0),(4,5),(5,6),(6,7),(7,4),(0,4),(1,5),(2,6),(3,7)]
-SKIP_YAW_CLASSES = {0, 1}  # pedestrian & rider: no geometric yaw info
+SKIP_YAW_CLASSES = {0, 1, 8, 9}  # person + traffic light/sign: no geometric yaw
 
 CENTER_SCALE = 3.0; SIZE_SCALE = 5.0
 YAW_NORM_FALLBACK = 0.15  # below this norm, fall back to PCA or default yaw

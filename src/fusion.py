@@ -66,8 +66,11 @@ class PointNet3DDetector(nn.Module):
         2: [1.90, 4.60, 1.50],   # car
         3: [2.50, 6.50, 2.80],   # truck
         4: [2.80, 10.5, 3.20],   # bus
+        5: [3.00, 15.0, 4.00],   # train
         6: [0.70, 2.00, 1.50],   # motorcycle
         7: [0.60, 1.80, 1.30],   # bicycle
+        8: [0.30, 0.30, 0.80],   # traffic light
+        9: [0.30, 0.30, 0.80],   # traffic sign
     }
     DEFAULT_PRIOR = [1.90, 4.60, 1.50]
 

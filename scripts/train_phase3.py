@@ -165,11 +165,13 @@ def main():
 
     print(f"[Phase3] Building datasets... preprocess_dir={pre_dir}")
     f_mix = data_cfg.get('frustum_mix_ratio', 0.3)
+    v_ids = data_cfg.get('val_scene_ids', 1)
+    t_ratio = data_cfg.get('test_ratio', 0.0)
     train_set = Phase3Dataset(nusc_root=data_root, version=data_cfg.get('version','v1.0-mini'),
         split='train', detector_path=detector_path, nsweeps=nsweeps,
         num_points=data_cfg.get('num_points',512), crop_size=data_cfg.get('crop_size',128),
         max_dist=data_cfg.get('max_dist',50.0), min_points=data_cfg.get('min_points',5),
-        val_scene_ids=data_cfg.get('val_scene_ids',2),
+        val_scene_ids=v_ids, test_ratio=t_ratio,
         remove_ground=data_cfg.get('remove_ground',True),
         use_augmentation=data_cfg.get('use_augmentation',True), preprocess_dir=pre_dir,
         frustum_mix_ratio=f_mix)
@@ -177,10 +179,18 @@ def main():
         split='val', detector_path=detector_path, nsweeps=nsweeps,
         num_points=data_cfg.get('num_points',512), crop_size=data_cfg.get('crop_size',128),
         max_dist=data_cfg.get('max_dist',50.0), min_points=data_cfg.get('min_points',5),
-        val_scene_ids=data_cfg.get('val_scene_ids',2),
+        val_scene_ids=v_ids,
         remove_ground=data_cfg.get('remove_ground',True),
         use_augmentation=False, preprocess_dir=pre_dir,
-        frustum_mix_ratio=0.0)  # val 纯 GT-bbox 评估
+        frustum_mix_ratio=0.0)
+    test_set = Phase3Dataset(nusc_root=data_root, version=data_cfg.get('version','v1.0-mini'),
+        split='test', detector_path=detector_path, nsweeps=nsweeps,
+        num_points=data_cfg.get('num_points',512), crop_size=data_cfg.get('crop_size',128),
+        max_dist=data_cfg.get('max_dist',50.0), min_points=data_cfg.get('min_points',5),
+        val_scene_ids=v_ids, test_ratio=t_ratio,
+        remove_ground=data_cfg.get('remove_ground',True),
+        use_augmentation=False, preprocess_dir=pre_dir,
+        frustum_mix_ratio=0.0)
 
     train_loader = DataLoader(train_set, batch_size=train_cfg['batch_size'], shuffle=True,
         collate_fn=phase3_collate, num_workers=train_cfg.get('num_workers',0), drop_last=True)
@@ -219,10 +229,10 @@ def main():
 
     print(f"\n{'='*60}")
     print(f"Phase 3 Training: epochs {start_epoch}→{train_cfg['epochs']}, "
-          f"{len(train_set)} train / {len(val_set)} val frames")
+          f"{len(train_set)} train / {len(val_set)} val / {len(test_set)} test frames")
     print(f"Model: PointNet3DDetector ({n_params:,} params)")
     print(f"Loss: center_residual + size_log + yaw_2theta")
-    print(f"Frustum mix: {f_mix*100:.0f}% | Face coverage encoder: 12→16")
+    print(f"Frustum mix: {f_mix*100:.0f}% | Classes: 10 | split: 90/8/2")
     print(f"{'='*60}\n")
 
     for epoch in range(start_epoch, train_cfg['epochs'] + 1):

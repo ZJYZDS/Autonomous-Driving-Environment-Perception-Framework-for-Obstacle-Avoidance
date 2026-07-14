@@ -9,7 +9,7 @@ import numpy as np
 
 
 def pipeline_predict(model, pts_lidar, dets, K, T_lidar2cam, device,
-                     num_points=512, min_points=5, class_names=None):
+                     num_points=512, min_points=30, class_names=None):
     """对一帧的所有 YOLO detection 执行完整的 frustum→净化→模型 管线.
 
     Args:
@@ -39,7 +39,7 @@ def pipeline_predict(model, pts_lidar, dets, K, T_lidar2cam, device,
                        4: 'bus', 6: 'motorcycle', 7: 'bicycle'}
 
     # 行人类别: 跳过模型 yaw, 用 PCA 兜底
-    SKIP_YAW_CLASSES = {0, 1}
+    SKIP_YAW_CLASSES = {0, 1, 8, 9}  # person + traffic light/sign: no geometric yaw
 
     CENTER_SCALE = 3.0
     SIZE_SCALE = 5.0
@@ -69,8 +69,9 @@ def pipeline_predict(model, pts_lidar, dets, K, T_lidar2cam, device,
         # ---- Step 3: DBSCAN 取最大簇 ----
         cluster_pts = extract_largest_cluster(ror_pts, eps=0.6, min_samples=8)
 
+        # 点数不足 → 跳过 (噪声检测)
         if len(cluster_pts) < min_points:
-            cluster_pts = ror_pts  # 回退
+            continue
 
         # ---- Step 4: 采样 ----
         n_pts = len(cluster_pts)
@@ -166,7 +167,7 @@ def pipeline_predict_with_gt(points_list, model, device,
         class_names = {0: 'pedestrian', 1: 'rider', 2: 'car', 3: 'truck',
                        4: 'bus', 6: 'motorcycle', 7: 'bicycle'}
 
-    SKIP_YAW_CLASSES = {0, 1}
+    SKIP_YAW_CLASSES = {0, 1, 8, 9}  # person + traffic light/sign: no geometric yaw
     CENTER_SCALE = 3.0
     SIZE_EXPAND = 1.12
 

@@ -342,6 +342,7 @@ class Phase3Dataset(Dataset):
                  min_points: int = 5,
                  match_threshold: float = 80.0,
                  val_scene_ids: int = 2,
+                 test_ratio: float = 0.0,  # train→test 随机抽取比例 (仅 split='train'/'test' 有效)
                  remove_ground: bool = True,
                  use_augmentation: bool = True,
                  preprocess_dir: str = None,
@@ -360,6 +361,7 @@ class Phase3Dataset(Dataset):
         self.use_augmentation = use_augmentation
         self.preprocess_dir = preprocess_dir
         self.frustum_mix_ratio = frustum_mix_ratio
+        self.test_ratio = test_ratio
 
         # 加载 YOLO 检测器: .pt 用 ultralytics, .onnx 用 ONNX Runtime
         if detector_path.endswith('.pt'):
@@ -371,7 +373,7 @@ class Phase3Dataset(Dataset):
         self.projector = LiDARProjector(nusc_root)
 
         # 构建帧列表
-        self._build_frame_list(val_scene_ids)
+        self._build_frame_list(val_scene_ids, test_ratio)
 
         # 按 sample 分组 GT
         self._gt_by_sample = self._group_annotations()
@@ -389,8 +391,13 @@ class Phase3Dataset(Dataset):
         self.detector = None
         self.projector = None
 
-    def _build_frame_list(self, val_scene_ids):
-        """构建有效帧列表: 按场景切分 train/val."""
+    def _build_frame_list(self, val_scene_ids, test_ratio=0.0):
+        """构建有效帧列表: val 按场景切分, test 从 train 帧随机抽取.
+
+        split='train': 前 N - val_scene_ids 个场景, 扣除 test 帧
+        split='val':   最后 val_scene_ids 个场景
+        split='test':  从 train 场景中随机抽 test_ratio 比例的帧
+        """
         from nuscenes.nuscenes import NuScenes
         scene_samples = {}
         for sample in self.nusc.sample:
@@ -398,18 +405,55 @@ class Phase3Dataset(Dataset):
 
         scenes = self.nusc.scene
         sorted_scenes = sorted(scenes, key=lambda s: s['name'])
-        if self.split == 'train':
-            split_scenes = sorted_scenes[:-val_scene_ids] if val_scene_ids > 0 else sorted_scenes
-        else:
-            split_scenes = sorted_scenes[-val_scene_ids:] if val_scene_ids > 0 else []
 
-        self.frames = []
-        for scene in split_scenes:
+        # 构建完整帧列表 (有序)
+        all_frames = []
+        for scene in sorted_scenes:
             for sample_token in scene_samples.get(scene['token'], []):
                 sample = self.nusc.get('sample', sample_token)
                 if ('CAM_FRONT' in sample['data'] and
                         'LIDAR_TOP' in sample['data']):
-                    self.frames.append(sample_token)
+                    all_frames.append(sample_token)
+
+        if self.split == 'val':
+            # val: 最后 val_scene_ids 个场景的所有帧
+            if val_scene_ids <= 0:
+                self.frames = []
+                return
+            val_scene_tokens = {s['token'] for s in sorted_scenes[-val_scene_ids:]}
+            self.frames = [f for f in all_frames
+                           if self._nusc_scene(self.nusc, f) in val_scene_tokens]
+        elif self.split == 'test':
+            # test: 从 train 场景中随机抽 test_ratio
+            if test_ratio <= 0:
+                self.frames = []
+                return
+            val_scene_tokens = {s['token'] for s in sorted_scenes[-val_scene_ids:]} if val_scene_ids > 0 else set()
+            train_frames = [f for f in all_frames
+                            if self._nusc_scene(self.nusc, f) not in val_scene_tokens]
+            n_test = max(1, int(len(train_frames) * test_ratio))
+            rng = np.random.RandomState(42)
+            self.frames = list(rng.choice(train_frames, n_test, replace=False))
+        else:
+            # train: 前 N - val_scene_ids 个场景, 扣除 test
+            if val_scene_ids > 0:
+                val_scene_tokens = {s['token'] for s in sorted_scenes[-val_scene_ids:]}
+            else:
+                val_scene_tokens = set()
+            train_frames = [f for f in all_frames
+                            if self._nusc_scene(self.nusc, f) not in val_scene_tokens]
+            if test_ratio > 0:
+                rng = np.random.RandomState(42)
+                n_test = max(1, int(len(train_frames) * test_ratio))
+                test_frames = set(rng.choice(train_frames, n_test, replace=False))
+                self.frames = [f for f in train_frames if f not in test_frames]
+            else:
+                self.frames = train_frames
+
+
+    @staticmethod
+    def _nusc_scene(nusc, sample_token):
+        return nusc.get('sample', sample_token)['scene_token']
 
     def _group_annotations(self):
         """按 sample_token 分组 GT 标注, 同时建立 instance→frames 索引."""
@@ -420,6 +464,10 @@ class Phase3Dataset(Dataset):
             self._inst_anns.setdefault(ann['instance_token'], []).append(
                 (ann['sample_token'], ann))
         return gt_by_sample
+
+    # ==========================================================================
+    # 坐标变换辅助
+    # ==========================================================================
 
     # ==========================================================================
     # 坐标变换辅助
@@ -783,8 +831,9 @@ class Phase3Dataset(Dataset):
             prior_size = np.array([1.9, 4.6, 1.5])  # fallback (car)
             cls_prior = {0: [0.70, 0.70, 1.70], 1: [0.70, 0.70, 1.70],
                          2: [1.90, 4.60, 1.50], 3: [2.50, 6.50, 2.80],
-                         4: [2.80, 10.5, 3.20], 6: [0.70, 2.00, 1.50],
-                         7: [0.60, 1.80, 1.30]}
+                         4: [2.80, 10.5, 3.20], 5: [3.00, 15.0, 4.00],
+                         6: [0.70, 2.00, 1.50], 7: [0.60, 1.80, 1.30],
+                         8: [0.30, 0.30, 0.80], 9: [0.30, 0.30, 0.80]}
             prior_size = np.array(cls_prior.get(raw['class_id'], [1.5, 2.0, 4.5]),
                                   dtype=np.float32)
             d_size = np.log(np.maximum(raw['gt_size'], 0.01) / prior_size)  # (3,)
