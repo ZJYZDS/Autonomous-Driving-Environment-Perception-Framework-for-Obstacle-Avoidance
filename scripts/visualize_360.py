@@ -73,14 +73,18 @@ for di in range(min(2, len(ds.frames))):
         cam_data[cam] = (K, T, img, dets, pf)
         all_dets.extend(pf)
 
-    # Global dedup: same class + XY < 3.0m → same object (keep best pts)
+    # Global dedup:
+    # - XY < 1.0m → same object regardless of class (YOLO misclass)
+    # - same class + XY < 3.0m → same object (adjacent camera overlap)
     all_dets.sort(key=lambda p: -p['num_pts'])
     all_dets_dedup = []
     for p in all_dets:
         c = p['center']; cid = p['class_id']
         dup = False
         for ep in all_dets_dedup:
-            if cid == ep['class_id'] and np.linalg.norm(c[:2] - ep['center'][:2]) < 3.0:
+            ec = ep['center']; ecid = ep['class_id']
+            d = np.linalg.norm(c[:2] - ec[:2])
+            if d < 1.0 or (cid == ecid and d < 3.0):
                 dup = True; break
         if not dup: all_dets_dedup.append(p)
 
