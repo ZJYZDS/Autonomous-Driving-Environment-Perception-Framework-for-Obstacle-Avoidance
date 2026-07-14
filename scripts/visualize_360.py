@@ -105,8 +105,6 @@ for di in range(min(2, len(ds.frames))):
         if abs(c[0]) > mr or abs(c[1]) > mr: continue
         cr = bc(c, s, yw); clr = CC.get(p['class_id'], 'red')
         for i, j in BE: ax.plot([cr[i, 0], cr[j, 0]], [cr[i, 1], cr[j, 1]], color=clr, lw=3.0)
-        al = s[1] * 0.6
-        ax.arrow(c[0], c[1], al * math.cos(yw), al * math.sin(yw), head_width=0.5, head_length=0.5, fc=clr, ec=clr, lw=2)
     # Draw camera FOV rays
     ego_x, ego_y = 0.9, 0.0  # approximate LiDAR position in ego
     for ci, cam in enumerate(CM):
