@@ -67,7 +67,7 @@ for di in range(min(2, len(ds.frames))):
                 dup = True; break
         if not dup: cam_dedup[cam].append(p)
 
-    # Step 2: cross-camera dedup (same class, <2.5m XY → same obj, keep best pts)
+    # Step 2: cross-camera dedup (same class, <1.5m XY → same obj, keep best pts)
     all_dets_dedup = []
     for cam, dets in cam_dedup.items():
         for p in dets: all_dets_dedup.append(p)
