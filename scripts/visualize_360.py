@@ -54,18 +54,33 @@ for di in range(min(2, len(ds.frames))):
         cam_data[cam] = (K, T, img, dets, pf)
         all_dets.extend(pf)
 
-    # Dedup by center distance + class match, keep highest num_pts
-    all_dets.sort(key=lambda p: -p['num_pts'])
-    all_dets_dedup = []
+    # Step 1: per-camera dedup (same camera, same class, <0.8m XY → same obj)
+    cam_dedup = {}
     for p in all_dets:
+        cam = p.get('camera', '')
+        if cam not in cam_dedup: cam_dedup[cam] = []
         c = p['center']; cid = p['class_id']
         dup = False
-        for ep in all_dets_dedup:
-            ec = ep['center']; ecid = ep['class_id']
-            if cid == ecid and np.linalg.norm(c[:2] - ec[:2]) < 1.5:
+        for ep in cam_dedup[cam]:
+            if cid == ep['class_id'] and np.linalg.norm(c[:2] - ep['center'][:2]) < 0.8:
+                if p['num_pts'] > ep['num_pts']: ep.update(p)
                 dup = True; break
-        if not dup:
-            all_dets_dedup.append(p)
+        if not dup: cam_dedup[cam].append(p)
+
+    # Step 2: cross-camera dedup (same class, <2.5m XY → same obj, keep best pts)
+    all_dets_dedup = []
+    for cam, dets in cam_dedup.items():
+        for p in dets: all_dets_dedup.append(p)
+    all_dets_dedup.sort(key=lambda p: -p['num_pts'])
+    final = []
+    for p in all_dets_dedup:
+        c = p['center']; cid = p['class_id']
+        dup = False
+        for ep in final:
+            if cid == ep['class_id'] and np.linalg.norm(c[:2] - ep['center'][:2]) < 2.5:
+                dup = True; break
+        if not dup: final.append(p)
+    all_dets_dedup = final
 
     pfx = f'display/360/frame_{di+1:02d}'
     print(f'Frame {di+1}: {len(all_dets_dedup)} unique objects from {len(CM)} cameras')
