@@ -40,47 +40,49 @@ for di in range(min(2, len(ds.frames))):
 
     # Collect all detections from all cameras
     all_dets = []
-    cam_imgs = {}
     cam_data = {}
     for cam in CM:
         img = ds._load_image(sample, cam)
         if img is None: continue
-        cam_imgs[cam] = img
         K, T, _ = proj.get_transform(st, cam)
         if K is None: continue
         dets = detector.predict(img)
         dets = [d for d in dets if d['class_id'] in OBSTACLE_CLASS_IDS]
+
+        # Per-camera YOLO NMS: suppress overlapping bboxes before pipeline
+        keep = np.ones(len(dets), dtype=bool)
+        for i in range(len(dets)):
+            if not keep[i]: continue
+            xi1, yi1, xi2, yi2 = dets[i]['bbox']
+            ai = (xi2 - xi1) * (yi2 - yi1)
+            for j in range(i + 1, len(dets)):
+                if not keep[j]: continue
+                if dets[i]['class_id'] != dets[j]['class_id']: continue
+                xj1, yj1, xj2, yj2 = dets[j]['bbox']
+                ix1, iy1 = max(xi1, xj1), max(yi1, yj1)
+                ix2, iy2 = min(xi2, xj2), min(yi2, yj2)
+                iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
+                inter = iw * ih
+                aj = (xj2 - xj1) * (yj2 - yj1)
+                iou = inter / (ai + aj - inter + 1e-8)
+                if iou > 0.3: keep[j] = False
+        dets = [d for k, d in zip(keep, dets) if k]
+
         pf = pipeline_predict(model, lidar, dets, K, T, device, num_points=512, min_points=30)
+        for p in pf: p['camera'] = cam
         cam_data[cam] = (K, T, img, dets, pf)
         all_dets.extend(pf)
 
-    # Step 1: per-camera dedup (same camera, same class, <0.8m XY → same obj)
-    cam_dedup = {}
-    for p in all_dets:
-        cam = p.get('camera', '')
-        if cam not in cam_dedup: cam_dedup[cam] = []
-        c = p['center']; cid = p['class_id']
-        dup = False
-        for ep in cam_dedup[cam]:
-            if cid == ep['class_id'] and np.linalg.norm(c[:2] - ep['center'][:2]) < 0.8:
-                if p['num_pts'] > ep['num_pts']: ep.update(p)
-                dup = True; break
-        if not dup: cam_dedup[cam].append(p)
-
-    # Step 2: cross-camera dedup (same class, <1.5m XY → same obj, keep best pts)
+    # Cross-camera dedup: same class + XY < 1.5m → same object
+    all_dets.sort(key=lambda p: -p['num_pts'])
     all_dets_dedup = []
-    for cam, dets in cam_dedup.items():
-        for p in dets: all_dets_dedup.append(p)
-    all_dets_dedup.sort(key=lambda p: -p['num_pts'])
-    final = []
-    for p in all_dets_dedup:
+    for p in all_dets:
         c = p['center']; cid = p['class_id']
         dup = False
-        for ep in final:
-            if cid == ep['class_id'] and np.linalg.norm(c[:2] - ep['center'][:2]) < 2.5:
+        for ep in all_dets_dedup:
+            if cid == ep['class_id'] and np.linalg.norm(c[:2] - ep['center'][:2]) < 1.5:
                 dup = True; break
-        if not dup: final.append(p)
-    all_dets_dedup = final
+        if not dup: all_dets_dedup.append(p)
 
     pfx = f'display/360/frame_{di+1:02d}'
     print(f'Frame {di+1}: {len(all_dets_dedup)} unique objects from {len(CM)} cameras')
