@@ -86,7 +86,7 @@ for di in range(min(2, len(ds.frames))):
     print(f'Frame {di+1}: {len(all_dets_dedup)} unique objects from {len(CM)} cameras')
 
     # ── Full 360 LiDAR top view ──
-    mr = 55
+    mr = 45
     fig, ax = plt.subplots(figsize=(18, 18))
     n = min(len(lidar_disp), 35000)
     idx = np.random.choice(len(lidar_disp), n, replace=False)
@@ -125,26 +125,14 @@ for di in range(min(2, len(ds.frames))):
         K, T, img, dets, pf = cam_data[cam]
         out = img.copy()
         h_img, w_img = img.shape[:2]
-        # Draw YOLO boxes
+        # Draw YOLO 2D boxes only
         for det in dets:
             x1, y1, x2, y2 = det['bbox'].astype(int)
             clr = CC.get(det['class_id'], '#FFF')
             r, g, b = int(clr[1:3], 16), int(clr[3:5], 16), int(clr[5:7], 16)
             cv2.rectangle(out, (x1, y1), (x2, y2), (b, g, r), 2)
-        # Project 3D bboxes
-        for p in pf:
-            c, s, yw = p['center'], p['size'], p['yaw']
-            corners = bc(c, s, yw)[:8]
-            pts_c = (T[:3, :3] @ corners.T).T + T[:3, 3]
-            zc = pts_c[:, 2]; vz = zc > 0.5
-            uv = np.zeros((8, 2), dtype=np.float32)
-            uv[:, 0] = K[0, 0] * pts_c[:, 0] / zc.clip(0.01) + K[0, 2]
-            uv[:, 1] = K[1, 1] * pts_c[:, 1] / zc.clip(0.01) + K[1, 2]
-            vb = vz & (uv[:, 0] >= 0) & (uv[:, 0] < w_img) & (uv[:, 1] >= 0) & (uv[:, 1] < h_img)
-            clr_n = CC.get(p['class_id'], '#FFF')
-            r2, g2, b2 = int(clr_n[1:3], 16), int(clr_n[3:5], 16), int(clr_n[5:7], 16)
-            for i, j in BE:
-                if vb[i] and vb[j]: cv2.line(out, tuple(uv[i].astype(int)), tuple(uv[j].astype(int)), (b2, g2, r2), 2)
+            cv2.putText(out, CN.get(det['class_id'], '?'), (x1, y1 - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (b, g, r), 2)
         ax.imshow(cv2.cvtColor(out, cv2.COLOR_BGR2RGB))
         cname = cam.replace('CAM_', '')
         ax.set_title(f'{cname} ({len(pf)} objs)', fontsize=10)

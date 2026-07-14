@@ -9,7 +9,7 @@ dataset:
   nsweeps: 5
   num_points: 512
   crop_size: 128
-  max_dist: 50.0
+  max_dist: 40.0
   min_points: 5
   match_threshold: 80.0
   remove_ground: true
