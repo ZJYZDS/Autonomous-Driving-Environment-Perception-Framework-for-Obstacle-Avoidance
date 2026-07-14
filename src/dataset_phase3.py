@@ -411,8 +411,7 @@ class Phase3Dataset(Dataset):
         for scene in sorted_scenes:
             for sample_token in scene_samples.get(scene['token'], []):
                 sample = self.nusc.get('sample', sample_token)
-                if ('CAM_FRONT' in sample['data'] and
-                        'LIDAR_TOP' in sample['data']):
+                if ('LIDAR_TOP' in sample['data']):
                     all_frames.append(sample_token)
 
         if self.split == 'val':
@@ -497,14 +496,16 @@ class Phase3Dataset(Dataset):
         t_lidar = np.array(lidar_calib['translation'])
         return R_lidar.T @ (pt_ego - t_lidar)
 
-    def _global_to_camera(self, point_global, sample):
+    def _global_to_camera(self, point_global, sample, camera='CAM_FRONT'):
         """global → camera 坐标 (仅用于投影匹配)."""
         ego_pose = self._get_ego_pose(sample)
         R_ego = Quaternion(ego_pose['rotation']).rotation_matrix
         t_ego = np.array(ego_pose['translation'])
         pt_ego = R_ego.T @ (np.array(point_global) - t_ego)
 
-        cam_sd_token = sample['data']['CAM_FRONT']
+        cam_sd_token = sample['data'].get(camera)
+        if cam_sd_token is None:
+            return None
         cam_sd = self.nusc.get('sample_data', cam_sd_token)
         cam_calib = self.nusc.get('calibrated_sensor', cam_sd['calibrated_sensor_token'])
         R_cam = Quaternion(cam_calib['rotation']).rotation_matrix
@@ -562,18 +563,22 @@ class Phase3Dataset(Dataset):
         """处理单帧: 跑完 YOLO→frustum→DBSCAN→匹配→采样, 返回原始样本列表 (无增强)."""
         sample = self.nusc.get('sample', sample_token)
 
-        # 1. 加载图像
-        img = self._load_image(sample)
-        if img is None:
+        # 1. 加载所有 6 个 camera 图像 + YOLO 检测
+        all_cam_data = []  # [(camera_name, img, dets, K, T_l2c)]
+        for camera in LiDARProjector.ALL_CAMERAS:
+            img = self._load_image(sample, camera)
+            if img is None:
+                continue
+            dets = self.detector.predict(img)
+            dets = [d for d in dets if d['class_id'] in OBSTACLE_CLASS_IDS]
+            K, T_lidar2cam, _ = self.projector.get_transform(sample_token, camera)
+            if K is not None:
+                all_cam_data.append((camera, img, dets, K, T_lidar2cam))
+
+        if not all_cam_data:
             return []
 
-        # 2. YOLO 检测
-        dets = self.detector.predict(img)
-        dets = [d for d in dets if d['class_id'] in OBSTACLE_CLASS_IDS]
-        if not dets:
-            return []
-
-        # 3. 多帧聚合点云
+        # 2. 多帧聚合点云 (LiDAR 360° — 只需一次)
         if self.preprocess_dir:
             cache_path = os.path.join(self.preprocess_dir, f"{sample_token}.npy")
             if os.path.exists(cache_path):
@@ -589,12 +594,10 @@ class Phase3Dataset(Dataset):
             if self.remove_ground:
                 pts = remove_ground_ransac(pts)
 
-        # 4. 投影矩阵
-        K, T_lidar2cam, _ = self.projector.get_transform(sample_token)
-        if K is None:
-            return []
+        # 过滤自身车辆点云 (距离 < 1.5m)
+        pts = pts[np.linalg.norm(pts[:, :2], axis=1) >= 1.5]
 
-        # 5. GT 标注
+        # 3. GT 标注
         gt_anns = self._gt_by_sample.get(sample_token, [])
         if not gt_anns:
             return []
@@ -608,40 +611,50 @@ class Phase3Dataset(Dataset):
 
         samples = []
 
-        # ---- 多帧点云累积: 同一 instance 跨帧合并点云, 增加几何信息 ----
-        # 1. 对每个 GT instance, 收集它出现过的帧的 GT-bbox-interior 点
-        # 2. 变换到当前帧 LiDAR 坐标系
-        # 3. 合并采样 → 多视角更完整的物体点云
-
         for ann_idx, ann in enumerate(gt_anns):
-            # ---- GT 3D → 2D 投影, 匹配 YOLO ----
             gt_c_lidar = self._global_to_lidar(ann['translation'], sample)
             if gt_c_lidar is None:
                 continue
-            gt_c_cam = self._global_to_camera(ann['translation'], sample)
-            if gt_c_cam is None or gt_c_cam[2] <= 0.5:
-                continue
-            u = (K[0, 0] * gt_c_cam[0] / gt_c_cam[2]) + K[0, 2]
-            v = (K[1, 1] * gt_c_cam[1] / gt_c_cam[2]) + K[1, 2]
-            if not (0 <= u < 1600 and 0 <= v < 900):
-                continue
 
+            # ---- 找最佳 camera: GT 中心投影到各 camera, 选视野内 bbox 最大的 ----
             gt_cls_id = NUSCENES_CAT_TO_CLASS.get(gt_cat_names[ann_idx], -1)
-            best_det, best_dist, best_same_cls = None, 60.0, False
-            for det in dets:
-                bx1, by1, bx2, by2 = det['bbox']
-                dcx, dcy = (bx1 + bx2) / 2, (by1 + by2) / 2
-                d2d = math.sqrt((u - dcx)**2 + (v - dcy)**2)
-                same_cls = (gt_cls_id == det['class_id'])
-                if not same_cls and det['class_id'] in (0, 1) and gt_cls_id in (0, 1):
-                    same_cls = True
-                cls_penalty = 0.0 if same_cls else 30.0
-                if d2d + cls_penalty < best_dist:
-                    best_dist = d2d + cls_penalty
-                    best_det = det
-                    best_same_cls = same_cls
+            best_cam, best_det, best_K, best_T, best_dist = None, None, None, None, float('inf')
+            best_u, best_v = 0, 0
 
-            if best_det is None or (best_dist > 50 and not best_same_cls):
+            for camera, img, dets, K, T_lidar2cam in all_cam_data:
+                gt_c_cam = self._global_to_camera(ann['translation'], sample, camera)
+                if gt_c_cam is None or gt_c_cam[2] <= 0.5:
+                    continue
+                u = (K[0, 0] * gt_c_cam[0] / gt_c_cam[2]) + K[0, 2]
+                v = (K[1, 1] * gt_c_cam[1] / gt_c_cam[2]) + K[1, 2]
+                h_img, w_img = img.shape[:2]
+                if not (0 <= u < w_img and 0 <= v < h_img):
+                    continue
+
+                for det in dets:
+                    bx1, by1, bx2, by2 = det['bbox']
+                    dcx, dcy = (bx1 + bx2) / 2, (by1 + by2) / 2
+                    d2d = math.sqrt((u - dcx)**2 + (v - dcy)**2)
+                    same_cls = (gt_cls_id == det['class_id'])
+                    if not same_cls and det['class_id'] in (0, 1) and gt_cls_id in (0, 1):
+                        same_cls = True
+                    cls_penalty = 0.0 if same_cls else 30.0
+                    if d2d + cls_penalty < best_dist:
+                        best_dist = d2d + cls_penalty
+                        best_cam, best_det = camera, det
+                        best_K, best_T = K, T_lidar2cam
+                        best_u, best_v = u, v
+
+            if best_det is None or best_dist > 80:
+                continue
+
+            det_class_id = best_det['class_id']
+            w, length, h = ann['size']
+            yaw = self._quaternion_to_yaw_lidar(ann['rotation'], sample)
+            K, T_lidar2cam = best_K, best_T
+            img = self._load_image(sample, best_cam)
+
+            if best_det is None or best_dist > 80:
                 continue
 
             det_class_id = best_det['class_id']
@@ -856,9 +869,10 @@ class Phase3Dataset(Dataset):
 
         return samples
 
-    def _load_image(self, sample):
-        """加载 CAM_FRONT 图像."""
-        sd_token = sample['data']['CAM_FRONT']
+    def _load_image(self, sample, camera='CAM_FRONT'):
+        """加载指定 camera 的图像."""
+        sd_token = sample['data'].get(camera)
+        if sd_token is None: return None
         filepath = self.nusc.get_sample_data_path(sd_token)
         return cv2.imread(filepath)
 

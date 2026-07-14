@@ -47,6 +47,10 @@ def pipeline_predict(model, pts_lidar, dets, K, T_lidar2cam, device,
 
     predictions = []
 
+    # 过滤 <1.5m 的自身点云 (ego-vehicle), 不参与检测
+    pts_dist = np.linalg.norm(pts_lidar[:, :2], axis=1)
+    pts_lidar = pts_lidar[pts_dist >= 1.5]
+
     for det in dets:
         bbox = det['bbox'].copy()  # (x1, y1, x2, y2)
         cls_id = det['class_id']
