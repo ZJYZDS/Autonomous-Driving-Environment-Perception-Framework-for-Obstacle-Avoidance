@@ -54,15 +54,17 @@ for di in range(min(2, len(ds.frames))):
         cam_data[cam] = (K, T, img, dets, pf)
         all_dets.extend(pf)
 
+    # Dedup by center distance + class match, keep highest num_pts
+    all_dets.sort(key=lambda p: -p['num_pts'])
     all_dets_dedup = []
-    seen_centers = []
     for p in all_dets:
-        c = p['center']
+        c = p['center']; cid = p['class_id']
         dup = False
-        for sc in seen_centers:
-            if np.linalg.norm(c - sc) < 2.0: dup = True; break
+        for ep in all_dets_dedup:
+            ec = ep['center']; ecid = ep['class_id']
+            if cid == ecid and np.linalg.norm(c[:2] - ec[:2]) < 1.5:
+                dup = True; break
         if not dup:
-            seen_centers.append(c)
             all_dets_dedup.append(p)
 
     pfx = f'display/360/frame_{di+1:02d}'
