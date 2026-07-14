@@ -91,7 +91,13 @@ for di in range(min(2, len(ds.frames))):
     n = min(len(lidar_disp), 35000)
     idx = np.random.choice(len(lidar_disp), n, replace=False)
     m = np.linalg.norm(lidar_disp[idx, :2], axis=1) < mr
-    ax.scatter(lidar_disp[idx][m, 0], lidar_disp[idx][m, 1], c='#333333', s=0.25, alpha=0.35, rasterized=True)
+    # Three color layers: obstacle (<1.5m) > background (>1.5m)
+    dist = np.linalg.norm(lidar_disp[idx], axis=1)
+    near = dist < 1.5
+    ax.scatter(lidar_disp[idx][m & ~near, 0], lidar_disp[idx][m & ~near, 1],
+               c='#333333', s=0.25, alpha=0.35, rasterized=True)
+    ax.scatter(lidar_disp[idx][m & near, 0], lidar_disp[idx][m & near, 1],
+               c='#FF4444', s=1.5, alpha=0.8, rasterized=True, label='obstacle <1.5m')
     for p in all_dets_dedup:
         c, s, yw = p['center'], p['size'], p['yaw']
         if abs(c[0]) > mr or abs(c[1]) > mr: continue
@@ -151,8 +157,14 @@ for di in range(min(2, len(ds.frames))):
     raw = aggregate_sweeps(nusc, sample, nsweeps=1)
     full = raw.points[:3, :].T.astype(np.float32)
     if len(full) > 80000: full = full[np.random.choice(len(full), 80000, replace=False)]
+    # Color near-range points red (<1.5m), others gray
+    near_mask = np.linalg.norm(full, axis=1) < 1.5
+    pl, cl = [], []
+    if near_mask.sum() > 0:
+        pl.append(full[near_mask]); cl.append((255, 50, 50))
+    if (~near_mask).sum() > 0:
+        pl.append(full[~near_mask]); cl.append((160, 160, 160))
     def h2rgb(h): h = h.lstrip('#'); return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-    pl, cl = [full], [(160, 160, 160)]
     for p in all_dets_dedup:
         c, s, yw = p['center'], p['size'], p['yaw']
         clr = h2rgb(CC.get(p['class_id'], '#FFF'))
