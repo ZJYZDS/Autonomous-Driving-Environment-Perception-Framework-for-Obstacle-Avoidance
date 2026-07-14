@@ -93,31 +93,36 @@ C2 (191K) / C3 (2.8M) 使用 PointNet++ Set Abstraction + 残差回归. 详见 `
 
 ```
 ├── src/
-│   ├── fusion.py              # PointNet3DDetector + C1/C2/C3 模型
-│   ├── dataset_phase3.py       # Phase 3: 多帧/地面/frustum/face_coverage
-│   ├── dataset_phase2.py       # Phase 2: YOLO→crop→残差
-│   ├── dataset_phase1.py       # LiDARProjector + 坐标变换 (共用)
+│   ├── fusion.py              # PointNet3DDetector (Phase 3) + C1/C2/C3 (Phase 2)
+│   ├── dataset_phase3.py       # Phase 3 数据集: 多帧/地面去除/frustum混合训练/face_coverage
+│   ├── dataset_phase2.py       # Phase 2 数据集: YOLO→LiDAR投影→残差
+│   ├── dataset_phase1.py       # 共用: LiDARProjector + 坐标变换
 │   ├── inference.py            # Frustum 推理管线 (YOLO→视锥→ROR→DBSCAN→Model)
-│   ├── loss.py                 # PointNet3DLoss + BboxRefinementLoss
-│   ├── metrics.py              # 评估指标
-│   ├── detector.py             # YOLO 检测器 (onnx / pt)
-│   ├── ground_removal.py       # RANSAC 地面去除 + 多帧 LiDAR 加载
-│   ├── init_estimator.py       # 2D→3D 初始化 (PCA yaw 等)
-│   ├── model.py                # PointNet++ FPS / Ball Query / Set Abstraction
-│   └── new_model_arch.md       # Phase 3 架构设计
+│   ├── loss.py                 # PointNet3DLoss (Phase 3) + BboxRefinementLoss (Phase 2)
+│   ├── metrics.py              # 评估指标 (Phase 2 残差 / Phase 3 绝对回归)
+│   ├── detector.py             # YOLO 检测器 (onnx 推理 + pt 加载)
+│   ├── ground_removal.py       # RANSAC 地面去除 + 多帧 LiDAR 聚合
+│   ├── init_estimator.py       # 2D→3D 初始化 (PCA yaw / plane fitting)
+│   ├── model.py                # PointNet++ FPS / Ball Query / Set Abstraction (Phase 2 用)
+│   ├── __init__.py
+│   └── new_model_arch.md       # Phase 3 架构设计文档
 ├── scripts/
-│   ├── train_phase3.py         # Phase 3 训练
-│   ├── train_phase2.py         # Phase 2 训练
-│   ├── visualize_scene.py      # GT-bbox 可视化 (评估模型上限)
-│   ├── visualize_infer.py      # Frustum 推理可视化 (模拟部署)
+│   ├── train_phase3.py         # Phase 3 训练入口
+│   ├── visualize_scene.py      # GT-bbox 可视化 (干净点云, 评估模型上限)
+│   ├── visualize_infer.py      # Frustum 推理可视化 (YOLO+视锥, 模拟部署)
 │   ├── visualize_c2.py         # Phase 2 C2 可视化
-│   ├── preprocess_phase3.py    # 离线预处理 (多帧聚合+地面去除→.npy)
-│   └── compare_c1c2c3.py       # Phase 2 模型对比
+│   ├── preprocess_phase3.py    # 离线预处理: 多帧聚合 + 地面去除 → .npy
+│   ├── gen_readme_imgs.py      # 生成 README 展示图
+│   ├── train_phase2.py         # Phase 2 训练入口
+│   ├── compare_c1c2c3.py       # Phase 2 模型对比 (C1/C2/C3)
+│   └── compare_c2c3.py         # Phase 2 模型对比 (C2/C3)
 ├── config/
 │   ├── phase3.yaml             # Phase 3 训练参数
 │   └── phase2.yaml             # Phase 2 训练参数
-├── docs/images/                # 效果截图 (.png/.jpg/.ply)
-├── CLAUDE.md                   # 坐标帧约定 + 已知陷阱 + 训练命令
+├── doc/                        # 设计文档
+├── docs/images/                # README 效果截图
+├── CLAUDE.md                   # 坐标帧约定 + 已知陷阱
+├── requirements.txt
 └── display/                    # 可视化输出 (gitignored)
 ```
 
