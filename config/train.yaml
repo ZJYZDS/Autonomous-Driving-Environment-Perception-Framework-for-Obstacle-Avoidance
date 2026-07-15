@@ -1,0 +1,55 @@
+# Training Configuration
+# 支持 nuScenes / KITTI 数据集切换
+
+# ---- Dataset ----
+dataset:
+  name: nuscenes                # nuscenes | kitti
+  root: data/nuscenes           # 数据集根目录
+  version: v1.0-mini            # nuScenes: v1.0-mini | v1.0-trainval
+  split:
+    train: 0.90                 # 90% train
+    val: 0.08                   # 8% val
+    test: 0.02                  # 2% test
+  nsweeps: 5                    # LiDAR 多帧聚合数
+  num_points: 512               # 模型输入点数
+  max_dist: 40.0                # 检测范围 (m)
+  min_points: 30                # frustum 最少点数阈值
+  remove_ground: true           # 地面去除
+  frustum_mix_ratio: 0.3       # frustum 噪声混合比例
+  use_augmentation: true        # 训练增强
+  preprocess_dir: data/nuscenes/preprocess_phase3/nsweeps_5
+
+# ---- Model ----
+model:
+  backbone_dim: 128             # PointNet 全局特征维度
+  hidden_dim: 96                # 检测头隐藏层维度
+  num_classes: 10               # 类别数
+  center_scale: 3.0             # center 残差归一化
+  size_expand: 1.12             # bbox 膨胀系数
+
+# ---- Training ----
+training:
+  epochs: 80
+  batch_size: 8
+  lr: 0.001
+  weight_decay: 0.0001
+  num_workers: 0
+  save_dir: checkpoints_phase3
+  device: cuda
+  warmup_epochs: 5
+  scheduler: cosine             # cosine | step | plateau
+
+# ---- Loss ----
+loss:
+  center_w: 4.0                 # center loss 权重
+  size_w: 0.3                   # size loss 权重
+  yaw_w: 0.3                    # yaw loss 权重
+  center_scale: 3.0             # d_center = (gt_c - centroid) / scale
+  size_scale: 5.0
+
+# ---- Detection ----
+detection:
+  detector_path: weiTiao_pt/best.pt
+  conf_thresh: 0.25             # YOLO 置信度阈值
+  obstacle_classes: [0,1,2,3,4,5,6,7,8,9]  # 检测类别
+  skip_yaw_classes: [0,1,8,9]   # 不拟合 yaw 的类别 (人/交通灯/标志)

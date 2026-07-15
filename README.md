@@ -1,147 +1,115 @@
-# Cross-Modal 3D Bounding Box Refinement
+# Frustum3D-Lite
 
-基于 YOLO 2D 检测 + LiDAR 点云的 3D 目标检测框回归。
+端到端 3D 目标检测：多相机 2D 检测 + LiDAR 点云 → 360° 全景 3D BBox 回归。
 
-**输入**: 6 相机 (360°) + LIDAR_TOP 多帧聚合点云
-**输出**: 每个检测物体的 3D bbox — 中心 (cx, cy, cz)、尺寸 (w, l, h)、朝向 (yaw)
-**数据集**: nuScenes v1.0-mini
+## 特性
 
-## 效果 (360° 多相机 + LiDAR, Test Frame 02 — 24 物体)
+- **360° 全向检测**: 6 相机 + LiDAR 覆盖车辆周围 40m 范围
+- **端到端**: YOLO 2D 检测 → frustum 点云提取 → PointNet 3D 回归
+- **轻量**: 50K 参数，单卡 GPU 推理
+- **数据集可切换**: nuScenes / KITTI，通过 YAML 配置
+- **传感器可配置**: 相机-LiDAR 内外参 YAML 驱动
 
-> 6 相机 YOLO 检测 + LiDAR 全景 3D BBox. 彩色粗框 = 模型预测, 箭头 = 朝向.
+## 效果 (nuScenes mini, Test Frame 02)
 
-### Frame 02 (21 物体, 全方向 40m)
+![360](docs/images/frame02_360top.png)
 
-![f02](docs/images/frame02_360top.png)
-
-### 6 相机 YOLO 检测 + 3D BBox 投影
+*360° LiDAR 俯视图 — 21 物体，40m 范围*
 
 ![cams](docs/images/frame02_cams.jpg)
 
-> CloudCompare/Meshlab 打开 `docs/images/frame02.ply` 交互查看 360° 全部 BBox 线框. 更多: `display/360/`.
+*6 相机 YOLO 检测*
 
-## Phase 3 (当前主线)
+> `docs/images/frame02.ply` — CloudCompare 交互查看 3D BBox
 
-### 模型: PointNet3DDetector
+## 管线
 
-| 项目 | 说明 |
+```
+多相机图像 (6×1600×900)                LIDAR_TOP (5-sweep)
+        │                                      │
+        ├─ YOLO → 2D bboxes                    ├─ 地面去除
+        │                                      ├─ 自身点滤波 (<1.5m)
+        │                                      │
+        └────── frustum 裁剪 ──────────────────┘
+                      │
+              ROR 去噪 → DBSCAN 聚类
+                      │
+              采样 512 点 → PointNet3DDetector
+                      │
+              3D BBox: [cx, cy, cz, w, l, h, yaw]
+```
+
+## 模型
+
+| 组件 | 规格 |
 |------|------|
-| 参数量 | ~51K |
-| 输入 | 512 个 LiDAR 点 (物体局部坐标) |
-| 输出 | [dx, dy, dz, δw, δl, δh, cos2θ, sin2θ] |
-| 骨干 | PointNet (3→64→128 + MaxPool, 128-dim 全局特征) |
-| 几何特征 | prior(16) + centroid(16) + extent(16) + viewdir(16) + face(16) + bbox(12) |
-| 融合维度 | 220 |
-| 头结构 | center: 220→192→96→3 / size: 220→96→3 / yaw: 220→96→2 |
+| 骨干 | PointNet (3→64→128 + MaxPool) |
+| 融合特征 | 128(backbone) + 16(prior) + 16(centroid) + 16(extent) + 16(viewdir) + 16(face_cov) + 12(bbox_feat) = 220 |
+| Center head | 220→192→96→3 |
+| Size head | 220→96→3 |
+| Yaw head | 220→96→2 |
 
-**Face Coverage**: 计算物体 6 个面的点云覆盖率 → 模型知道哪个面最完整 → 推断中心偏移方向.
-
-### 数据管线
-
-```
-每帧:
-  1. 加载预处理的 LiDAR 点云 (5-sweep 聚合 + RANSAC 地面去除)
-  2. YOLO 检测 6 相机 (360°) → 2D bbox
-  3. GT 3D bbox 中心投影到 2D → 匹配 YOLO bbox → 确定 class_id
-  4. GT bbox 内部点提取 (+ 跨帧累积 4 帧同 instance 的点)
-  5. 30% 概率用 frustum 管线替换 GT-bbox 点 (YOLO bbox→视锥→ROR→DBSCAN)
-  6. 采样到 512 点, 随机 Z 轴旋转增强
-  7. 计算 face_coverage
-  8. 构建 target: d_center = (gt_center - centroid)/3.0, d_size = log(gt_size/prior)
-```
-
-### 损失
-
-| 项 | 公式 | 权重 |
-|----|------|------|
-| Center | SmoothL1(d_center_pred, d_center_gt) | 4.0 |
-| Size | MSE(d_size_pred, d_size_gt) | 0.3 |
-| Yaw | 1 − cos(2Δθ) (person 类跳过) | 0.3 |
-
-### 指标 (nuScenes mini val, 360° multi-camera, 234 cars)
+## 指标 (nuScenes mini, 360°)
 
 | 指标 | 值 |
 |------|-----|
-| Car center mean | 0.26m |
-| Car yaw mean | **7.6°** |
-| Car size mean | 0.15m |
-
-### 推理管线
-
-```
-6 Cameras (360°) → YOLO → 2D bboxes
-LIDAR_TOP → 多帧聚合 → 地面去除 → 全景点云
-                         │
-每个 YOLO bbox:
-  1. frustum 裁剪 (bbox → 3D 视锥射线, 自适应 margin)
-  2. ROR 去噪 (Open3D statistical outlier removal)
-  3. DBSCAN 聚类 → 取最大簇
-  4. 采样 512 点 → PointNet3DDetector
-  5. 解码: center = centroid + d_center×3.0, size = prior×exp(d_size)×1.12
-```
-
-## Phase 2 (残差回归, 参考)
-
-C2 (191K) / C3 (2.8M) 使用 PointNet++ Set Abstraction + 残差回归. 详见 `config/phase2.yaml`.
-
-## 项目结构
-
-```
-├── src/
-│   ├── fusion.py              # PointNet3DDetector (Phase 3) + C1/C2/C3 (Phase 2)
-│   ├── dataset_phase3.py       # Phase 3 数据集: 多帧/地面去除/frustum混合训练/face_coverage
-│   ├── dataset_phase2.py       # Phase 2 数据集: YOLO→LiDAR投影→残差
-│   ├── dataset_phase1.py       # 共用: LiDARProjector + 坐标变换
-│   ├── inference.py            # Frustum 推理管线 (YOLO→视锥→ROR→DBSCAN→Model)
-│   ├── loss.py                 # PointNet3DLoss (Phase 3) + BboxRefinementLoss (Phase 2)
-│   ├── metrics.py              # 评估指标 (Phase 2 残差 / Phase 3 绝对回归)
-│   ├── detector.py             # YOLO 检测器 (onnx 推理 + pt 加载)
-│   ├── ground_removal.py       # RANSAC 地面去除 + 多帧 LiDAR 聚合
-│   ├── init_estimator.py       # 2D→3D 初始化 (PCA yaw / plane fitting)
-│   ├── model.py                # PointNet++ FPS / Ball Query / Set Abstraction (Phase 2 用)
-│   ├── __init__.py
-│   └── new_model_arch.md       # Phase 3 架构设计文档
-├── scripts/
-│   ├── train_phase3.py         # Phase 3 训练入口
-│   ├── visualize_scene.py      # GT-bbox 可视化 (干净点云, 评估模型上限)
-│   ├── visualize_infer.py      # Frustum 推理可视化 (YOLO+视锥, 模拟部署)
-│   ├── visualize_c2.py         # Phase 2 C2 可视化
-│   ├── preprocess_phase3.py    # 离线预处理: 多帧聚合 + 地面去除 → .npy
-│   ├── gen_readme_imgs.py      # 生成 README 展示图
-│   ├── train_phase2.py         # Phase 2 训练入口
-│   ├── compare_c1c2c3.py       # Phase 2 模型对比 (C1/C2/C3)
-│   └── compare_c2c3.py         # Phase 2 模型对比 (C2/C3)
-├── config/
-│   ├── phase3.yaml             # Phase 3 训练参数
-│   └── phase2.yaml             # Phase 2 训练参数
-├── doc/                        # 设计文档
-├── docs/images/                # README 效果截图
-├── CLAUDE.md                   # 坐标帧约定 + 已知陷阱
-├── requirements.txt
-└── display/                    # 可视化输出 (gitignored)
-```
+| Car center error | 0.26m |
+| Car yaw error | 7.6° |
+| Car size error | 0.15m |
 
 ## 快速开始
 
 ```bash
-# 预处理 (仅首次)
+# 预处理
 python scripts/preprocess_phase3.py --nsweeps 5
 
 # 训练
-python scripts/train_phase3.py --epochs 80
+python scripts/train_phase3.py --config config/train.yaml --epochs 80
 
-# 360° 多相机可视化
+# 360° 可视化
 python scripts/visualize_360.py
-
-# GT-bbox 可视化 (模型上限评估)
-python scripts/visualize_scene.py --num_frames 8
-
-# Frustum 推理可视化 (模拟真实部署)
-python scripts/visualize_infer.py --num_frames 8
 ```
 
-输出: `display/multi_frame/` (GT-bbox), `display/infer_frustum/` (frustum).
+## 配置
+
+| 文件 | 用途 |
+|------|------|
+| `config/train.yaml` | 训练参数、数据集路径、模型超参 |
+| `config/sensor.yaml` | LiDAR/相机内外参、检测范围 |
+| `config/phase3.yaml` | Phase 3 完整配置 (向后兼容) |
+
+### 切换数据集
+
+```yaml
+# config/train.yaml
+dataset:
+  name: nuscenes        # nuscenes | kitti
+  root: data/nuscenes   # 数据集路径
+  version: v1.0-mini    # nuScenes 版本
+```
+
+## 项目结构
+
+```
+├── config/
+│   ├── train.yaml              # 训练配置 (数据集/模型/损失)
+│   ├── sensor.yaml             # 传感器标定配置
+│   └── phase3.yaml             # Phase 3 完整配置
+├── src/
+│   ├── fusion.py               # PointNet3DDetector
+│   ├── dataset_phase3.py       # 数据集 + frustum 管线
+│   ├── inference.py            # 推理管线
+│   ├── loss.py / metrics.py    # 损失 / 指标
+│   ├── detector.py             # YOLO 检测器
+│   └── ...
+├── scripts/
+│   ├── train_phase3.py         # 训练入口
+│   ├── visualize_360.py        # 360° 可视化
+│   ├── visualize_scene.py      # 单帧可视化
+│   └── preprocess_phase3.py    # 预处理
+└── display/                    # 可视化输出 (gitignored)
+```
 
 ## 坐标约定
 
-所有计算在 **LiDAR 帧** 进行. nuScenes 尺寸: `[width, length, height]`. 详见 `CLAUDE.md`.
+LiDAR 帧: X=右, Y=前, Z=上. nuScenes 尺寸: `[width, length, height]`.

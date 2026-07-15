@@ -1,0 +1,43 @@
+# Sensor Calibration Configuration
+# 定义 LiDAR 与多相机之间的内外参数
+
+defaults:
+  dataset: nuscenes
+
+# ---- LiDAR ----
+lidar:
+  channel: LIDAR_TOP
+  nsweeps: 5           # 多帧聚合数
+  min_dist: 1.5        # 自身车辆点过滤 (m)
+  max_dist: 40.0       # 最大检测距离 (m)
+  remove_ground: true  # RANSAC 地面去除
+
+# ---- Cameras (360° coverage) ----
+cameras:
+  - CAM_FRONT
+  - CAM_FRONT_RIGHT
+  - CAM_BACK_RIGHT
+  - CAM_BACK
+  - CAM_BACK_LEFT
+  - CAM_FRONT_LEFT
+
+# ---- Calibration Source ----
+# nuScenes: 从 calibrated_sensor.json 自动读取
+# KITTI:    从 calib/ 目录读取 .txt 文件
+# custom:   手动指定内参和外参矩阵
+calibration_source: auto  # auto | kitti | custom
+
+# ---- 手动校准 (calibration_source=custom 时使用) ----
+custom_calib:
+  # 相机内参: [fx, 0, cx, 0, fy, cy, 0, 0, 1]
+  K:
+    - [1266.4, 0.0, 816.3]
+    - [0.0, 1266.4, 491.5]
+    - [0.0, 0.0, 1.0]
+  # LiDAR → Camera 外参: [R|t] 4x4
+  T_lidar2cam:
+    - [0.0, -1.0, 0.0, 0.0]
+    - [0.0, 0.0, -1.0, 0.0]
+    - [1.0, 0.0, 0.0, 0.0]
+    - [0.0, 0.0, 0.0, 1.0]
+  image_size: [1600, 900]
