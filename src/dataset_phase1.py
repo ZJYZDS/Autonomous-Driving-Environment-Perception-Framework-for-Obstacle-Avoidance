@@ -73,15 +73,18 @@ class LiDARProjector:
             self._sample_sensor_calib.setdefault(sd["sample_token"], {})[sd["filename"].split("/")[1]] \
             = sd["calibrated_sensor_token"]
 
-    def get_transform(self, sample_token):
-        """Get LiDAR-to-camera projection for a given sample.
+    ALL_CAMERAS = ['CAM_FRONT', 'CAM_FRONT_RIGHT', 'CAM_BACK_RIGHT',
+                   'CAM_BACK', 'CAM_BACK_LEFT', 'CAM_FRONT_LEFT']
+
+    def get_transform(self, sample_token, camera='CAM_FRONT'):
+        """Get LiDAR-to-camera projection for a given sample + camera.
 
         Returns:
             K: (3, 3) camera intrinsic matrix
             T_lidar2cam: (3, 4) [R|t] from LiDAR to camera frame
             img_shape: (H, W)
         """
-        cam_calib_token = self._sample_sensor_calib.get(sample_token, {}).get("CAM_FRONT")
+        cam_calib_token = self._sample_sensor_calib.get(sample_token, {}).get(camera)
         lidar_calib_token = self._sample_sensor_calib.get(sample_token, {}).get("LIDAR_TOP")
 
         if cam_calib_token is None or lidar_calib_token is None:
