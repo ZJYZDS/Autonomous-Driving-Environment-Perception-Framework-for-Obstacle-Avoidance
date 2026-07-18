@@ -116,12 +116,12 @@ class Tracker:
                           d['class_id'], timestamp, d.get('class_name', '?'))
                 self.tracks[self.next_id] = t
                 self.next_id += 1
-            return self._get_outputs()
+            return self._get_outputs(dt=0.13)
 
         if not detections:
             for t in active_tracks:
                 t.mark_missed()
-            return self._get_outputs()
+            return self._get_outputs(dt=0.13)
 
         # Build cost matrix (Hungarian)
         n_tracks = len(active_tracks)
@@ -174,18 +174,23 @@ class Tracker:
         for tid in dead:
             del self.tracks[tid]
 
-        return self._get_outputs()
+        return self._get_outputs(dt=0.13)
 
-    def _get_outputs(self):
-        """Return list of active tracks with fitted motion."""
+    def _get_outputs(self, dt=0.0):
+        """Return list of active tracks, with optional velocity-based forward prediction."""
         results = []
         for t in self.tracks.values():
             if t.alive and len(t.history) >= self.min_history:
-                last_center = t.history[-1][1]
+                center = t.history[-1][1].copy()
+                # Forward-predict center by dt to compensate processing latency
+                if dt > 0 and t.fitted_v > 0.3:
+                    center[0] += t.fitted_vx * dt
+                    center[1] += t.fitted_vy * dt
                 last_size = t.history[-1][2]
                 results.append({
                     'track_id': t.track_id,
-                    'center': last_center,
+                    'center': center,
+                    'raw_center': t.history[-1][1],  # original detection center
                     'size': last_size,
                     'yaw': t.fitted_yaw,          # motion yaw
                     'model_yaw': t.model_yaw,      # geometric yaw from model
