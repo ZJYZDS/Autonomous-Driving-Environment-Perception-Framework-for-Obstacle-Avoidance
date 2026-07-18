@@ -69,11 +69,9 @@ class Track:
 
         self.fitted_v = math.sqrt(vx**2 + vy**2)
 
-        # Yaw from velocity direction: atan2(vy, vx)
-        if self.fitted_v > 0.3:  # only update yaw if moving
-            self.fitted_yaw = math.atan2(vy, vx)
-            if self.fitted_yaw < 0:
-                self.fitted_yaw += math.pi  # [0, π)
+        # Yaw from velocity direction: keep full [0, 2π) for correct arrow direction
+        if self.fitted_v > 0.3:
+            self.fitted_yaw = math.atan2(vy, vx)  # [-π, π] → keep full range
 
         # Acceleration from velocity change (if enough history)
         if len(self.history) >= 4 and dt > 0.3:
