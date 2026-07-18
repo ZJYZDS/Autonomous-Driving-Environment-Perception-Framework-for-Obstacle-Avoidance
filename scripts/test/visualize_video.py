@@ -38,7 +38,7 @@ print(f'Scene: {val_scene["name"]}, {len(scene_samples)} frames')
 os.makedirs('display/video', exist_ok=True)
 VIDEO_W, VIDEO_H = 1920, 1080
 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-out_video = cv2.VideoWriter('display/video/realtime_360.mp4', fourcc, 15, (VIDEO_W, VIDEO_H))
+out_video = cv2.VideoWriter('display/video/realtime_360.mp4', fourcc, 4, (VIDEO_W, VIDEO_H))
 
 def bc(c,s,y):
     w,l,h=s; half=np.array([[l/2,w/2,h/2]]); cs,ss=math.cos(y),math.sin(y)
@@ -137,12 +137,18 @@ for fi, sample in enumerate(scene_samples):
              f'{len(dedup)} objects',
              color='#aaa', fontsize=9, family='monospace')
 
-    # Convert to OpenCV BGR and write
-    fig.canvas.draw()
-    frame_rgb = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8).reshape(VIDEO_H, VIDEO_W, 3)
-    frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
-    out_video.write(frame_bgr)
+    # Render to buffer via savefig
+    import io
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=100, facecolor='#111111', bbox_inches='tight', pad_inches=0)
+    buf.seek(0)
+    frame_arr = np.frombuffer(buf.getvalue(), dtype=np.uint8)
+    frame_bgr = cv2.imdecode(frame_arr, cv2.IMREAD_COLOR)
+    if frame_bgr is not None:
+        frame_bgr = cv2.resize(frame_bgr, (VIDEO_W, VIDEO_H))
+        out_video.write(frame_bgr)
     plt.close(fig)
+    buf.close()
 
     print(f'  Frame {fi+1:3d}: {len(dedup):2d} objs, {dt*1000:4.0f}ms')
 
