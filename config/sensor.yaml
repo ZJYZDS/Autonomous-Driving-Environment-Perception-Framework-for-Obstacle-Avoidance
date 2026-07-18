@@ -9,7 +9,7 @@ lidar:
   channel: LIDAR_TOP
   nsweeps: 5           # 多帧聚合数
   min_dist: 1.5        # 自身车辆点过滤 (m)
-  max_dist: 40.0       # 最大检测距离 (m)
+  max_dist: 50.0       # 最大检测距离 (m)
   remove_ground: true  # RANSAC 地面去除
 
 # ---- Cameras (360° coverage) ----

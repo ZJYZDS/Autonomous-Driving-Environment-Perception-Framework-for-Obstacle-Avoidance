@@ -12,7 +12,7 @@ dataset:
     test: 0.02                  # 2% test
   nsweeps: 5                    # LiDAR 多帧聚合数
   num_points: 512               # 模型输入点数
-  max_dist: 40.0                # 检测范围 (m)
+  max_dist: 50.0                # 检测范围 (m)
   min_points: 30                # frustum 最少点数阈值
   remove_ground: true           # 地面去除
   frustum_mix_ratio: 0.3       # frustum 噪声混合比例
