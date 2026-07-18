@@ -21,6 +21,8 @@ class Track:
         self.model_yaw = yaw       # geometric yaw from model (primary)
         self.history = [(timestamp, center.copy(), size.copy(), yaw)]
         self.fitted_yaw = yaw      # yaw from velocity direction
+        self.fitted_vx = 0.0       # velocity x (m/s)
+        self.fitted_vy = 0.0       # velocity y (m/s)
         self.fitted_v = 0.0        # speed (m/s)
         self.fitted_a = 0.0        # acceleration (m/s²)
         self.alive = True
@@ -60,6 +62,8 @@ class Track:
         last_center = centers[-1]
         vx = (last_center[0] - first_center[0]) / dt
         vy = (last_center[1] - first_center[1]) / dt
+        self.fitted_vx = vx
+        self.fitted_vy = vy
         self.fitted_v = math.sqrt(vx**2 + vy**2)
 
         if self.fitted_v > 0.3:
@@ -178,9 +182,11 @@ class Tracker:
                     'track_id': t.track_id,
                     'center': last_center,
                     'size': last_size,
-                    'yaw': t.fitted_yaw,          # motion yaw (velocity direction)
+                    'yaw': t.fitted_yaw,          # motion yaw
                     'model_yaw': t.model_yaw,      # geometric yaw from model
                     'v': t.fitted_v,              # m/s
+                    'vx': t.fitted_vx,            # m/s in LiDAR x
+                    'vy': t.fitted_vy,            # m/s in LiDAR y
                     'a': t.fitted_a,              # m/s²
                     'class_id': t.class_id,
                     'class_name': t.class_name,
