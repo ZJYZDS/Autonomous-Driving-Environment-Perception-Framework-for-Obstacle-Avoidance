@@ -18,6 +18,8 @@
 
 ![demo](docs/images/demo.gif)
 
+*实时检测: 360° LiDAR + 6 相机 YOLO (40 frames)*
+
 ## 管线
 
 ```
