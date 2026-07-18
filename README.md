@@ -10,17 +10,11 @@
 - **数据集可切换**: nuScenes / KITTI，通过 YAML 配置
 - **传感器可配置**: 相机-LiDAR 内外参 YAML 驱动
 
-## 效果 (nuScenes mini, Test Frame 02)
+## 效果 (360° 实时检测, 40 帧 scene, 50m)
 
-![360](docs/images/frame02_360top.png)
+> 左: 360° LiDAR 俯视图 (红=自身<1.5m). 右: 6 相机 YOLO 2D 检测框. 彩色框=3D BBox.
 
-*360° LiDAR 俯视图 — 21 物体，40m 范围*
-
-![cams](docs/images/frame02_cams.jpg)
-
-*6 相机 YOLO 检测*
-
-> `docs/images/frame02.ply` — CloudCompare 交互查看 3D BBox
+![demo](docs/images/demo.gif)
 
 ## 管线
 
