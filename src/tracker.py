@@ -94,16 +94,20 @@ class Tracker:
         self.tracks = {}       # track_id → Track
         self.next_id = 0
         self.max_dist = max_dist
-        self.min_history = min_history  # min frames before outputting motion
+        self.min_history = min_history
+        self.last_dt = 0.0     # processing latency from last update
 
-    def update(self, detections, timestamp):
+    def update(self, detections, timestamp, proc_latency=None):
         """
         Args:
-            detections: list[dict] with 'center', 'size', 'yaw', 'class_id', 'class_name'
+            detections: list[dict]
             timestamp: int (microseconds)
+            proc_latency: float (seconds) processing latency, auto-detected if None
         Returns:
-            list[dict]: updated tracks with fitted motion {track_id, center, size, yaw, v, a, class_id, class_name}
+            list[dict]: updated tracks with fitted motion
         """
+        if proc_latency is not None:
+            self.last_dt = proc_latency
         # Predict track positions (simple: last known position)
         active_tracks = [t for t in self.tracks.values() if t.alive]
 
@@ -116,12 +120,12 @@ class Tracker:
                           d['class_id'], timestamp, d.get('class_name', '?'))
                 self.tracks[self.next_id] = t
                 self.next_id += 1
-            return self._get_outputs(dt=0.13)
+            return self._get_outputs()
 
         if not detections:
             for t in active_tracks:
                 t.mark_missed()
-            return self._get_outputs(dt=0.13)
+            return self._get_outputs()
 
         # Build cost matrix (Hungarian)
         n_tracks = len(active_tracks)
@@ -174,18 +178,18 @@ class Tracker:
         for tid in dead:
             del self.tracks[tid]
 
-        return self._get_outputs(dt=0.13)
+        return self._get_outputs()
 
-    def _get_outputs(self, dt=0.0):
-        """Return list of active tracks, with optional velocity-based forward prediction."""
+    def _get_outputs(self):
+        """Return list of active tracks with velocity-based forward prediction."""
         results = []
         for t in self.tracks.values():
             if t.alive and len(t.history) >= self.min_history:
                 center = t.history[-1][1].copy()
-                # Forward-predict center by dt to compensate processing latency
-                if dt > 0 and t.fitted_v > 0.3:
-                    center[0] += t.fitted_vx * dt
-                    center[1] += t.fitted_vy * dt
+                # Forward-predict by processing latency
+                if self.last_dt > 0 and t.fitted_v > 0.3:
+                    center[0] += t.fitted_vx * self.last_dt
+                    center[1] += t.fitted_vy * self.last_dt
                 last_size = t.history[-1][2]
                 results.append({
                     'track_id': t.track_id,

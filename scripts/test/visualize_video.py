@@ -99,9 +99,8 @@ for fi, sample in enumerate(scene_samples):
         if not dup: dedup.append(p)
 
     # Tracker update → get motion-fitted tracks
-    tracks = tracker.update(dedup, sample['timestamp'])
-
     dt = time.time() - t0
+    tracks = tracker.update(dedup, sample['timestamp'], proc_latency=dt)
     times.append(dt)
 
     # ── Render frame ──
