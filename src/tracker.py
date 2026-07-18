@@ -54,47 +54,28 @@ class Track:
         if dt < 0.05:
             return
 
-        # Weighted linear regression (recent frames weighted higher)
-        weights = np.exp(np.linspace(-2, 0, len(times)))  # exponential weighting
-        weights /= weights.sum()
-
-        # Fit: center = v * t + c0  per axis
-        t_mean = (times * weights).sum()
-        cx_mean = (centers[:, 0] * weights).sum()
-        cy_mean = (centers[:, 1] * weights).sum()
-
-        t_var = (weights * (times - t_mean)**2).sum() + 1e-8
-        vx = (weights * (times - t_mean) * (centers[:, 0] - cx_mean)).sum() / t_var
-        vy = (weights * (times - t_mean) * (centers[:, 1] - cy_mean)).sum() / t_var
-
+        # Simple displacement-based velocity: (last_pos - first_pos) / dt
+        # More robust to noise than regression for short windows
+        first_center = centers[0]
+        last_center = centers[-1]
+        vx = (last_center[0] - first_center[0]) / dt
+        vy = (last_center[1] - first_center[1]) / dt
         self.fitted_v = math.sqrt(vx**2 + vy**2)
 
-        # Yaw from velocity direction: keep full [0, 2π) for correct arrow direction
         if self.fitted_v > 0.3:
-            self.fitted_yaw = math.atan2(vy, vx)  # [-π, π] → keep full range
+            self.fitted_yaw = math.atan2(vy, vx)
 
-        # Acceleration from velocity change (if enough history)
+        # Acceleration from velocity change over two halves
         if len(self.history) >= 4 and dt > 0.3:
-            # Compute velocities in two halves
             mid = len(times) // 2
-            t1 = times[:mid]; c1 = centers[:mid]
-            t2 = times[mid:]; c2 = centers[mid:]
-            w1 = np.exp(np.linspace(-2, 0, len(t1))); w1 /= w1.sum()
-            w2 = np.exp(np.linspace(-2, 0, len(t2))); w2 /= w2.sum()
-
-            def fit_vel(t, c, w):
-                tm = (t * w).sum()
-                cm0 = (c[:, 0] * w).sum()
-                cm1 = (c[:, 1] * w).sum()
-                tv = (w * (t - tm)**2).sum() + 1e-8
-                v0 = (w * (t - tm) * (c[:, 0] - cm0)).sum() / tv
-                v1 = (w * (t - tm) * (c[:, 1] - cm1)).sum() / tv
-                return np.array([v0, v1])
-
-            v1 = fit_vel(t1, c1, w1)
-            v2 = fit_vel(t2, c2, w2)
-            t_mid = (t2.mean() - t1.mean())
-            self.fitted_a = np.linalg.norm(v2 - v1) / (t_mid + 1e-8)
+            dt1 = times[mid-1] - times[0] + 1e-8
+            dt2 = times[-1] - times[mid] + 1e-8
+            v1x = (centers[mid-1, 0] - centers[0, 0]) / dt1
+            v1y = (centers[mid-1, 1] - centers[0, 1]) / dt1
+            v2x = (centers[-1, 0] - centers[mid, 0]) / dt2
+            v2y = (centers[-1, 1] - centers[mid, 1]) / dt2
+            dt_mid = (times[-1] - times[0]) / 2
+            self.fitted_a = math.sqrt((v2x-v1x)**2 + (v2y-v1y)**2) / (dt_mid + 1e-8)
 
 
 class Tracker:
