@@ -9,6 +9,7 @@ from src.fusion import PointNet3DDetector
 from src.dataset_phase1 import LiDARProjector
 from src.detector import YOLOPtDetector, OBSTACLE_CLASS_IDS
 from src.inference import pipeline_predict
+from src.tracker import Tracker
 from nuscenes.nuscenes import NuScenes
 
 device = torch.device('cuda')
@@ -36,6 +37,7 @@ scene_samples.sort(key=lambda s: s['timestamp'])
 print(f'Scene: {val_scene["name"]}, {len(scene_samples)} frames')
 
 os.makedirs('display/video', exist_ok=True)
+tracker = Tracker(max_dist=5.0, min_history=3)
 VIDEO_W, VIDEO_H = 1920, 1080
 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 out_video = cv2.VideoWriter('display/video/realtime_360.mp4', fourcc, 4, (VIDEO_W, VIDEO_H))
@@ -96,6 +98,9 @@ for fi, sample in enumerate(scene_samples):
             if np.linalg.norm(c[:2]-ep['center'][:2])<1.0: dup=True; break
         if not dup: dedup.append(p)
 
+    # Tracker update → get motion-fitted tracks
+    tracks = tracker.update(dedup, sample['timestamp'])
+
     dt = time.time() - t0
     times.append(dt)
 
@@ -111,16 +116,25 @@ for fi, sample in enumerate(scene_samples):
     near = np.linalg.norm(lidar[idx], axis=1) < 1.5
     ax_lidar.scatter(lidar[idx][m & ~near,0], lidar[idx][m & ~near,1], c='#444', s=0.3, alpha=0.4)
     ax_lidar.scatter(lidar[idx][m & near,0], lidar[idx][m & near,1], c='#FF4444', s=1.2, alpha=0.8)
-    for p in dedup:
-        c,s,yw = p['center'],p['size'],p['yaw']
-        if abs(c[0])>mr or abs(c[1])>mr: continue
-        cr=bc(c,s,yw); clr=CC.get(p['class_id'],'red')
-        for i,j in BE: ax_lidar.plot([cr[i,0],cr[j,0]],[cr[i,1],cr[j,1]],color=clr,lw=2.5)
-        ax_lidar.text(c[0]+0.5,c[1]+0.5,p['class_name'],fontsize=7,color=clr,weight='bold')
     ax_lidar.set_xlim(-mr,mr); ax_lidar.set_ylim(-mr,mr); ax_lidar.set_aspect('equal')
     ax_lidar.tick_params(colors='white', labelsize=8)
-    ax_lidar.set_title(f'360 deg LiDAR — {len(dedup)} objects', color='white', fontsize=12)
+    ax_lidar.set_title(f'360 deg LiDAR — {len(tracks)} objects', color='white', fontsize=12)
     for spine in ax_lidar.spines.values(): spine.set_color('#555')
+
+    # Draw tracks with motion info
+    for trk in tracks:
+        c = trk['center']; s = trk['size']; yaw = trk['yaw']
+        v = trk['v']; tid = trk['track_id']
+        if abs(c[0]) > mr or abs(c[1]) > mr: continue
+        cr = bc(c, s, yaw); clr = CC.get(trk['class_id'], 'red')
+        for i, j in BE: ax_lidar.plot([cr[i, 0], cr[j, 0]], [cr[i, 1], cr[j, 1]], color=clr, lw=2.5)
+        # Velocity arrow
+        if v > 0.3:
+            ax_lidar.arrow(c[0], c[1], 2 * v * math.cos(yaw), 2 * v * math.sin(yaw),
+                           head_width=0.4, head_length=0.4, fc=clr, ec=clr, lw=1.5, alpha=0.8)
+        ax_lidar.text(c[0] + 0.5, c[1] + 0.5,
+                      f'{trk["class_name"]}#{tid} {v:.1f}m/s',
+                      fontsize=7, color=clr, weight='bold')
 
     # Right: 6 camera thumbnails in 2x3 grid
     for ci, cam in enumerate(CM):
